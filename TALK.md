@@ -1167,7 +1167,7 @@ dense QKᵀ scores in TMEM
 
 - [A1] NVIDIA, *NVLink and NVSwitch* product/architecture documentation: https://www.nvidia.com/en-us/data-center/nvlink/
 - [A2] NVIDIA, *DGX/HGX platform architecture documentation*: https://docs.nvidia.com/dgx/
-- [A3] AMD, *Infinity Architecture / Instinct platform documentation*: https://www.amd.com/en/technologies/infinity-architecture.html
+- [A3] AMD ROCm, *AMD Instinct MI300 Series microarchitecture*, including MI300 package and eight-GPU node-level Infinity Fabric topology: https://rocm.docs.amd.com/en/latest/reference/gpu-arch/mi300.html
 - [A4] Huawei, *Groundbreaking SuperPoD Interconnect: Leading a New Paradigm for AI Infrastructure*, 2025-09-18: https://www.huawei.com/en/news/2025/9/hc-xu-keynote-speech
 - [A5] NVIDIA Networking, ConnectX / BlueField / Spectrum documentation: https://docs.nvidia.com/networking/
 - [A6] NVIDIA DOCA documentation: https://docs.nvidia.com/doca/
