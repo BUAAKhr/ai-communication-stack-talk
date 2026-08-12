@@ -1,6 +1,6 @@
 # 前序演讲对齐说明
 
-审校日期：2026-08-12
+审校日期：2026-08-13
 
 ## 输入材料与核验范围
 
@@ -25,15 +25,15 @@
 
 | 前序内容 | 本场承接位置 | 本场新增的问题 |
 |---|---|---|
-| p.19–24：credit、replay、lossless/lossy、failure/rot、PCIe | Slide 23–25、32、Backup T1 | 把 delivery、placement、completion、ordering 和 runtime recovery 分层，并量化 BDP/state |
+| p.19–24：credit、replay、lossless/lossy、failure/rot、PCIe | Slide 10–12、22–25、32、Backup T1 | 先把机制放进 GPU A→GPU B 的物理路径，再把 delivery、placement、completion、ordering 和 runtime recovery 分层，并量化 BDP/state |
 | p.27–41：router、HOL/VC、causation、Orderlock、InfiniBand、lossy router | Slide 25–31、Backup T1/T5 | 进入 multipath、DDP、SACK、IRN、UET、Falcon、UCCL 与 congestion control |
-| p.43：Domain and Connection | Slide 21–22、33–34 | 区分管理域、一致性/内存真相域、RTT/故障域与通信 connection |
+| p.43：Domain and Connection | Slide 21–22、33–34 | 区分管理域、一致性/内存真相域、RTT/故障域与通信 connection；解释透明层次不等于状态消失 |
 | p.50：RC QP “Network Jar Pit” | Slide 26–31、34、37、Backup T5 | 用现有 RNIC、UET、Falcon、UCCL 检查连接、可靠状态与路径究竟能拆到什么程度 |
 | p.51–53：按粒度/时效选择可靠性、百万连接、事务与 tracker 成本 | Slide 24–33、44–49 | 把策略落到 collective、P2P、EP/MoE 的 burst、incast、tail 与资源预算 |
 | p.55–60：tile、Tile Load/Store、SQ/CQ 批评、同步与 memory hierarchy | Slide 52–62、Backup T2 | 用 TMA、NVSHMEM、NCCL Device API、TileLink、distributed GEMM、MegaMoE 检查可实现路径 |
 | p.61：SUE/DMA/Aggregation/NIC unified system | Slide 33、39、60–71 | 比较 endpoint、switch、DPU/I/O memory、collective engine 与 KV/context-memory placement |
 
-因此，本场不重复证明 credit、VC 或 SQ/CQ 的存在，而是把前序提出的架构原则放进真实 AI dataflow 中做压力测试：性能是否来自少一次 staging、少一个 completion、更多 path entropy，还是把状态转移到了 CPU、GPU、NIC SRAM、DPA 或远端 memory appliance。
+因此，本场不重复证明 credit、VC 或 SQ/CQ 的存在，而是先让零基础听众跟踪一个 tensor chunk，再把前序提出的架构原则放进真实 AI dataflow 中做压力测试：性能是否来自少一次 staging、少一个 completion、更多 path entropy，还是把状态转移到了 CPU、GPU、NIC SRAM、DPA 或远端 memory appliance。
 
 ## 一致的核心结论
 
@@ -73,6 +73,6 @@
 
 建议用 90–120 秒：
 
-> 上一场已经从 wire、credit、replay 和 router 推导出网络为何需要流控、可靠性与显式因果，又进一步提出 connection/path 解耦和 tile transaction 的未来抽象。我们这一场不再从链路重新开始，而是把这些抽象放进 AI workload：collective、P2P、MoE、distributed kernel 和 KV movement 分别产生什么流量，现有 UET、Falcon、UCCL、NCCL/DeepEP 与 GPU 异步机制已经做到哪一步，以及那些被抽象隐藏的 queue、buffer、completion 和 failure state 最终由谁付费。
+> 上一场已经从 wire、credit、replay 和 router 推导出网络为何需要流控、可靠性与显式因果，又进一步提出 connection/path 解耦和 tile transaction 的未来抽象。我们这一场先用一个 GPU A→GPU B 的 tensor chunk 建立端到端坐标系，再把这些抽象放进 AI workload：collective、P2P、MoE、distributed kernel 和 KV movement 分别产生什么依赖，现有 UET、Falcon、UCCL、NCCL/DeepEP 与 GPU 异步机制已经做到哪一步，以及那些被抽象隐藏的 queue、buffer、completion 和 failure state 最终由谁付费。
 
 这段衔接既承认前序已经建立的体系结构主线，也明确本场的任务是 workload-to-implementation verification，而不是重复或替代前序方案。

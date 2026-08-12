@@ -1,6 +1,6 @@
 # 科学性审校说明
 
-本稿于 2026-08-12 完成一轮公开资料审校。审校目标不是证明所有未来产品细节，而是让每个结论落在正确的证据层级，并显式保留公开资料的边界。
+本稿于 2026-08-13 完成零基础叙事重写后的公开资料复核。审校目标不是证明所有未来产品细节，而是让每个结论落在正确的证据层级，并显式保留公开资料的边界。
 
 ## 已修正的关键问题
 
@@ -28,6 +28,15 @@
 22. 前序 p.43 的“同一台计算机共享同一份内存真相”不外推到所有离散 GPU/NIC 系统；addressability、coherence、consistency scope、IOMMU/PASID 和 ownership 必须分别确认。前序 p.50 的 UEC state placement 也只作为实现假设，不作为 UET wire specification 的规定。
 23. “不承诺伪 exactly-once”被限定为 transport 在不确定故障后不能单独判断远端应用动作；不否认带 durable deduplication、transaction/consensus 的上层系统在明确模型下提供 exactly-once effect。
 24. 前序 p.44–48 仍含未完成的 audio/gaming/Ethernet 草稿页。本场不使用“音频设备不用中断”或 timer polling 的类比作为网络科学结论。
+25. 新增的端到端延迟分解式是诊断框架，不是假设各项严格独立或可直接线性测量；queueing、serialization、placement、completion 与 overlap 在真实流水中可能相互重叠。
+26. `effective throughput ≤ min(...)` 是资源服务率的必要上界，用于提醒 source/destination memory、PCIe、NIC、fabric 和 consumer 都可能限速；它不替代 collective algorithm、duplex、协议开销和并发流的精确模型。
+27. “一个 API 下有十三层”是教学分层，不是标准网络分层模型。层数用于显式追踪隐藏工作，不声称每个实现都存在十三个独立模块。
+28. GPUDirect/peer DMA 被描述为 payload 可绕过 CPU DRAM，不等于 CPU 不参与注册、控制或 completion，也不保证所有平台都能避免 PCIe root/NUMA/IOMMU 限制；不支持时可能退回 staging。
+29. sender-side CQE、transport ACK、remote memory placement 和 consumer-visible completion 被分开描述；任何具体 API 的完成语义仍须以其规范、memory ordering 和实现为准。
+30. KV hierarchy 中的 host/remote/context tier 不被称为透明扩展 HBM。它们需要 object identity、placement、prefetch、publish、eviction 和 failure policy，且逐 token 同步访问通常不能直接按介质峰值带宽估算。
+31. 新增的 `32 KiB ÷ 50 GB/s ≈ 0.66 μs` 只用于说明 raw serialization 的数量级。`50 GB/s` 是把 400 Gb/s 做单位换算后的理想上限，未扣除 framing、FEC、协议 header、idle gap 与 payload efficiency；真实端到端延迟必须继续加入 DMA、queue、placement、completion 等事件。
+32. `initiator / progress engine / data mover / completion owner / recovery owner` 是责任归因框架，不声称每个实现都有五个独立硬件模块；同一 CPU、GPU kernel、RNIC 或 endpoint 可以同时承担多个角色。
+33. “正文事件链 + 讲师演算 + 症状/证据”是教学组织方式，不把启发式诊断词汇当成标准接口或性能模型。具体 API 的完成、ordering、memory scope 与错误语义仍以对应规范和实现为准。
 
 ## 演讲时仍需限定
 

@@ -19,6 +19,50 @@ for ($i = 0; $i -lt $expected.Count; $i++) {
     }
 }
 
+$expectedTitle = '# AI Communication Stack: From One Tensor to the Whole System'
+$normalizedTalkText = $text.TrimStart([char]0xFEFF)
+if (-not $normalizedTalkText.StartsWith($expectedTitle)) {
+    throw "Unexpected talk title. Expected: $expectedTitle"
+}
+
+$readmePath = Join-Path $PSScriptRoot "..\README.md"
+$readmeText = Get-Content -LiteralPath $readmePath -Raw -Encoding UTF8
+if (-not $readmeText.TrimStart([char]0xFEFF).StartsWith($expectedTitle)) {
+    throw "README title is not synchronized with TALK.md."
+}
+
+$mainSlideBodies = [regex]::Matches(
+    $text,
+    '(?ms)^## Slide ([0-9]+)[^\r\n]*\r?\n(.*?)(?=^## Slide [0-9]+|\z)'
+)
+if ($mainSlideBodies.Count -ne 72) {
+    throw "Expected 72 complete main-slide bodies, found $($mainSlideBodies.Count)."
+}
+
+$speakerNoteMarker = ([char]0x8BB2).ToString() +
+    ([char]0x5E08).ToString() +
+    ([char]0x8BF4).ToString() +
+    ([char]0x660E).ToString() +
+    ([char]0xFF1A).ToString()
+$missingSpeakerNotes = @($mainSlideBodies |
+    Where-Object { -not $_.Groups[2].Value.Contains($speakerNoteMarker) } |
+    ForEach-Object { $_.Groups[1].Value })
+if ($missingSpeakerNotes.Count -gt 0) {
+    throw "Main slides missing speaker notes: $($missingSpeakerNotes -join ', ')"
+}
+
+$narrativeAnchors = @(
+    'Physical Architecture & Topology',
+    'Semantics, Transport and Reliability',
+    'Communication Software & Execution',
+    'Locality, Overlap, Distributed Kernel and KV'
+)
+foreach ($anchor in $narrativeAnchors) {
+    if (-not $text.Contains($anchor)) {
+        throw "Missing zero-background narrative anchor: $anchor"
+    }
+}
+
 $used = @([regex]::Matches($text, '\[(A|B|C)[0-9]+\]') |
     ForEach-Object { $_.Value } |
     Sort-Object -Unique)

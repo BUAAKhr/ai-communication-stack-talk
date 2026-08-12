@@ -1,16 +1,24 @@
-# AI Communication Stack: From Workload to Dataflow
+# AI Communication Stack: From One Tensor to the Whole System
 
-一份面向 AI 系统、GPU/加速器和高性能网络工程师的通信技术 talk。内容不是按设备罗列，而是沿着一条端到端数据流展开：模型为什么产生通信，数据穿过哪些物理边界，fabric 必须提供什么语义，谁实际搬运数据，以及如何缩短关键路径。
+一份从零基础出发、面向 AI 系统与高性能通信的技术 talk。整场反复跟踪同一个场景：GPU A 已产生一个 tensor chunk，GPU B 必须等它安全可见后才能继续。听众会从一个 API 调用一路追到算法分块、CPU/GPU progress、memory movement、RNIC、transport、switch queue、link protection、目标放置、completion 与恢复。
+
+这里的“透明”只表示调用者不必显式管理，不表示工作和成本消失。讲稿要求每一层都回答：数据在哪、谁发起、谁推进、隐藏了什么状态、会卡在哪、上层看到什么症状、用什么证据能证明。正文给出可独立阅读的事件链和因果关系；讲师说明再用统一的 32 KiB tensor chunk 演算性能瓶颈、错误边界与取证方法。
 
 ## 内容
 
-- 72 页主讲内容，独立讲授约 130 分钟；紧接前序演讲时建议压缩为约 121 分钟。
+- 72 页主讲内容，独立讲授约 148 分钟；紧接前序演讲时建议压缩为约 136 分钟。
+- 一个统一的端到端性能模型：source readiness、launch/progress、staging、queueing、serialization、placement、completion、consumer wait、recovery 与 overlap。
+- 一张 13 层透明性阶梯，用来定位 `all_reduce()`、P2P、MoE dispatch、distributed kernel 和 KV movement 下方的隐藏工作。
+- 一张 API 入口到隐藏层次的映射：PyTorch collective、NCCL、RDMA verbs 与 device-side put/store 分别站在哪一层之上。
+- 三条可逐事件跟踪的数据路径：scale-up fabric、GPUDirect/RNIC/PCIe，以及 host-memory staging fallback。
+- 一套固定取证方法：依赖与 bytes、物理位置、五类执行角色、四条逻辑路径、服务率与队列、timeline/counter/P99。
 - AI server 内的 PCIe、NVLink/NVSwitch、xGMI、HCCS 与 NUMA。
 - Blackwell 双 Die 的官方事实，以及不能从 MCM-GPU 论文反推的产品细节。
 - Scale-Up 与 Scale-Out 的语义、RTT、故障域和可靠性状态。
 - RDMA、DDP、multipath、out-of-order placement、SACK、拥塞控制和 BDP。
 - UCCL：基于现有 RDMA verbs 的 host-CPU software transport，以及它与 Falcon、UEC 的层次差异。
-- MPI、NCCL、NCCL EP、DeepEP、P2P、KV movement 与 MoE 通信。
+- MPI/NCCL 的 progress 与 collective schedule，以及 CPU initiated、GPU initiated、NIC/DPU offload 的责任边界。
+- P2P object lifecycle、NCCL EP、DeepEP、MoE dispatch/combine、expert skew 与 incast。
 - compute-communication overlap、异步数据搬运、distributed kernel。
 - DeepGEMM MegaMoE 的真实 dataflow，以及与 FlashInfer CuTeDSL MegaMoE、FlashMoE 的边界。
 - KV cache、Mooncake、DualPath、HiSparse 与 context-memory tier。
