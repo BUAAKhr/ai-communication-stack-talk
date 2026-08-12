@@ -1,6 +1,6 @@
 ﻿# AI Communication Stack: From Workload to Dataflow
 
-> 公开审校稿 v0.6，资料核对日期：2026-08-12。
+> 公开审校稿 v0.7，资料核对日期：2026-08-12。
 >
 > 建议时长：128–132 分钟；主讲 72 页，另附备份页、demo 与制图建议。本文先按逐页脚本写，便于下一步直接改成 PPT。
 >
@@ -395,6 +395,8 @@ one message / transaction
 
 讲师说明：多路径的目标是减少 ECMP hash collision、避开拥塞和故障路径。代价不是一定要把全部 payload 暂存在巨型 reorder buffer，而是每个分段必须携带足够的 identity/offset，接收端还要跟踪 gap、duplicate 与 completion。UEC 明确规定跨不同路径不保证到达顺序；Google Falcon 与 OpenAI MRC 也把 multipath 和可靠连接语义结合起来。[A9][A10][A31][A32]
 
+UCCL-Tran 给出了一个具体的 endpoint 侧实现：在不改现有 RNIC 的前提下，优先用 UC 绕过 NIC 固化的可靠性与拥塞控制，把 data path 留给 GPUDirect，把可扩展 transport control 放到 host CPU；NIC 不支持 UC 时，再按能力退回到关闭硬件 CC 的 RC，或用 UD 加 scatter-gather。它通过多 QP 的细粒度 path selection 利用 ECMP 路径；软件统一管理跨 QP 的顺序与完成，并在 UC/UD 路径承担 ACK/retry，RC 路径则仍保留 NIC 的 packet reliability。[A40][B16]
+
 ## Slide 27｜DDP 的真正启示：把 placement 与 arrival order 解耦
 
 | RFC 5041 DDP model | 分段携带的关键定位信息 |
@@ -444,7 +446,9 @@ MRC direction:
 
 讲师说明：不能把“rate-based 必然差、window-based 必然好”当结论。窗口更直接约束 in-flight bytes；rate/pacing 对突发塑形有效；receiver credit 保护接收端；telemetry 可以加快反馈但增加数据面与控制逻辑。UEC 同时定义 network-signal CC、receiver-credit CC、transport flow control 与 packet window。Falcon 使用细粒度 RTT、硬件 traffic shaping、快速重传与 multipath；ConnectX-8 官方文档可确认 advanced routing 和 telemetry-based congestion control，DOCA DPA 还暴露 programmable congestion-control events，但本稿不反推未公开的 PSA 内部流水线。[A31][A32][A35][A36]
 
-## Slide 31｜四种 profile：可靠性成本放在不同位置
+UCCL-Tran 的取舍是把控制决策从 packet 粒度放宽到数据 chunk/RTT 粒度：论文实现默认约 32 KB control coalescing，用 NIC 时间戳和丢包作为主要可见信号，再由 CPU engine 做 pacing 与路径选择，并在 UC/UD 路径做软件恢复。它说明“软件控制面可行”，但不等于 CPU 能看到 NIC 已消费掉的全部 ECN/trim 信息，也不等于软件路径具有硬件 transport 的同样故障响应时间。[A40]
+
+## Slide 31｜五种 design profile：可靠性成本放在不同位置
 
 | Profile | 正常交付与恢复 | 多路径/乱序 | 端点状态取舍 |
 |---|---|---|---|
@@ -452,8 +456,11 @@ MRC direction:
 | SUE full | LLR + PFC/CBFC + end-to-end Go-Back-N | 每 plane 单路径，可由外部跨接口均衡 | reliable transport + fixed-window CC |
 | SUE Lite | LLR + lossless traffic class | 假定每 plane 按序 | 无 end-to-end reliable transport、无 CC |
 | UET 1.0 | endpoint ACK/NACK、SACK、retry，可运行于 best-effort/lossless | multipath + RUD/ROD | 更丰富 PDC/CCC、timer 与 tracking |
+| UCCL-Tran | UC/UD 软件可靠性；RC 保留硬件可靠性；控制策略在 host CPU | 软件多 QP、细粒度 spraying、GPU-memory reorder | 不改 RNIC；受 CPU、verbs 与可见拥塞信号约束 |
 
 讲师说明：这些不是同层、同目标产品的跑分表。UALink/SUE 面向短距 scale-up，UET 1.0 的重点是 backend scale-out。Broadcom 官方规范称 SUE Lite 通过移除 reliable transport、congestion control、AXI datapath 等简化，使“整个 SUE IP”最多缩小 50%；MAC/Link/PHY 大小不变，也不等于整个 XPU I/O die 减半。[A32][A33][A34]
+
+UCCL 与 Falcon/UEC 的关系也要分开：UCCL 是基于现有 RNIC verbs 的软件 endpoint/transport 实现，目标是快速试验并部署新的 control policy；Falcon 更接近硬件或 SmartNIC 中的可编程 transport；UEC 是 wire-level 规范。UCCL 的 multipath 不自动让底层 wire protocol 变成 UET，也不保证跨厂商 NIC 拥有相同的硬件能力。[A31][A32][A40][B16]
 
 ## Slide 32｜BDP 最终会变成 buffer、状态与 Die 面积
 
@@ -502,6 +509,8 @@ collective / P2P / EP APIs
 transport backend / device API
 ```
 
+论文中的 UCCL-Tran 插在 collective library 与 RDMA backend 之间：应用继续使用 NCCL 风格接口，network plugin 负责连接、memory registration、QP/路径组织和软件 transport；payload 仍由 NIC 直接 DMA 到 GPU，CPU engine 主要处理控制面。当前开源项目又分别增加了 NIXL-style UCCL-P2P 与 DeepEP-compatible UCCL-EP，它们不是同一个 plugin 接口。[A40][B16]
+
 ## Slide 35｜MPI：通信语义来自科学计算
 
 屏幕正文：
@@ -524,6 +533,8 @@ execution: CUDA kernels + transport plugins
 
 讲师说明：NCCL 的用户看到 collective，内部却要决定 ring/tree、channel、LL/LL128/Simple、NVLink/PCIe/NET 等路径。性能问题要区分算法选择、拓扑发现、transport 和 kernel schedule。[A15]
 
+UCCL 的当前开源项目通过 network-plugin 方式提供 UCCL-Tran，目标是对 NCCL/RCCL 应用保持较小的迁移成本；但原始论文的贡献重点是可扩展 software transport，不应把仓库后来加入的 UCCL-P2P、UCCL-EP 和 KV/权重传输能力倒推成论文当时已经完整覆盖的内容。[A40][B16]
+
 ## Slide 37｜CPU-initiated vs GPU-initiated
 
 | | CPU initiated | GPU/device initiated |
@@ -533,6 +544,8 @@ execution: CUDA kernels + transport plugins
 | 风险 | CPU jitter、launch serialization | persistent resources、memory ordering、debug complexity |
 
 讲师说明：NCCL Device API 的 LSA/GIN、NVSHMEM、SHMEM-style put/get/signal 都服务于后一方向。NCCL EP 已公开基于 LSA 与 GIN 的 GPU-initiated 路径；NVSHMEM 则提供 CUDA kernel/stream 内的一侧通信模型。两者的 API、progress 与支持拓扑不能互相替代。[B1][B13]
+
+UCCL-Tran 则是另一种折中：GPU 走 GPUDirect data path，host CPU 运行 TX/RX、pacing 和路径控制，并在 UC/UD 路径负责 ACK/重传；RC 路径仍使用 NIC hardware reliability。它减少了改 NIC 的周期，却把 CPU 核、host NUMA、polling 和控制延迟纳入通信预算；因此不能把“CPU control path”说成 GPU-initiated communication 的同义词。[A40][B16]
 
 ## Slide 38｜DOCA 放在哪里
 
@@ -1094,6 +1107,56 @@ required outstanding bytes ≥ target bandwidth × observed latency
 
 讲师说明：异步引擎能把等待移出计算 warp，但不会消除 Little's Law。为了隐藏更长延迟，要增加并发、buffer 或分块；这些都会与 register、SMEM/L2、Tensor Core 和 I/O die area 竞争。公开资料不足以把这种 trade-off 换算成某个产品固定的 300–400 mm²，因此只讲资源方向，不给臆测面积。
 
+## Backup Slide T5｜UCCL：把 transport control plane 放回软件
+
+UCCL 要解决的不是单一算法问题，而是 RDMA transport 的演进速度跟不上 ML workload：
+
+| Workload/部署变化 | 固化 RNIC transport 的缺口 | UCCL 验证的方向 |
+|---|---|---|
+| collective 的低 flow entropy | 单/少路径 ECMP collision | 多 QP + packet spraying |
+| MoE transient incast | sender-driven CC 难保护最后一跳 | receiver-driven EQDS |
+| lossy / 长 BDP fabric | Go-Back-N 放大重传 | GPU-memory reorder + selective retransmission |
+| 应用知道数据重要性 | NIC 难做 application-transport co-design | 用户态可替换 policy，例如 semi-reliable 研究方向 |
+| 多代、多厂商 NIC | CC/reliability 细节不一致 | 在公共软件层尽量统一控制行为 |
+
+```text
+collective / P2P / EP API
+          ↓ plugin
+UCCL CPU engines: CC · LB · pacing · ordering/completion
+                  + software ACK/retry on UC/UD
+          ↓ UC / RC / UD / AF_XDP
+RNIC data path ──GPUDirect──> GPU memory
+```
+
+讲师说明：UCCL-Tran 的关键不是“用 CPU 重新发送每个 packet”。UC/RC 仍让 RNIC 做 segmentation/reassembly 和 GPU DMA，CPU 主要处理 transport control。论文中的默认实现按约 32 KB chunk 合并控制与选路决策；对 UC/RC，发送端按 chunk 指定目标 GPU buffer，软件根据 chunk sequence number 组织跨 QP 乱序和消息完成，其中 UC 做软件恢复、RC 保留硬件恢复；对 UD，scatter-gather 把固定 control header 与 payload 分到 CPU/GPU，接收端再把 packet-level reorder 融入已有 reduction kernel。[A40]
+
+| 路径 | UCCL 如何借用现有 RNIC 能力 | 主要代价 |
+|---|---|---|
+| UC | write-with-immediate；绕过硬件 CC/可靠性，保留分段与重组卸载 | 不是所有 RNIC 都支持 UC |
+| RC | 在条件允许时关闭硬件 CC，再复用 write-with-immediate | 仍受 RC 固化可靠性/乱序语义影响 |
+| UD | send/recv + scatter-gather；软件做分段、重组和重排 | CPU 开销更高，GPU 需要额外 scattered copy |
+
+为了接近硬件路径性能，论文还组合了四项工程手段：
+
+1. run-to-completion engine，把 TX/RX、pacing、timeout 与 retransmission 放入同一轮询循环；
+2. connection splitting，让一个高带宽 connection 可由多个 CPU engine 分担；
+3. 默认约 32 KB control coalescing，以 chunk 而非逐 packet 做大部分控制决策；
+4. UD 上 chained posting，一次 MMIO 提交多个 send/recv WQE。
+
+论文用三类 case study 说明 extensibility：Swift/CUBIC 风格 sender-driven multipath、面向 incast 的 receiver-driven EQDS、以及 selective retransmission。其 UC/RC 默认可使用最多 256 个 QP path，并让同一 NIC pair 上的多条 UCCL connection 共享 QP 集合；“256 paths”不是要求每个应用 connection 永久独占 256 份完整 transport state。[A40]
+
+论文对 QP scalability 的解释同样不能省略：ML collective 通常传输大消息和接近 MTU 的 packet，能摊薄 QP context swap；在论文采用的 PCIe topology 上，GPUDirect payload 主要经过 GPU/NIC 所在 PCIe switch，而 QP context fetch/verb posting 走 CPU 侧路径，降低了两类流量的直接竞争。这是论文 testbed 的解释，不是所有主板拓扑都天然成立。[A40]
+
+讲师说明：论文报告的 4.5×、1.9× 和 EQDS tail-latency 改善都绑定具体 NIC、拓扑、GPU、消息大小和对照实现，不能写成“UCCL 普遍比 RDMA 快 4.5×”。论文在其 CX-7 环境中报告单 CPU core 可处理 400 Gb/s 单向 UC/RC traffic，EFA/UD 路径借助 chained posting 报告单核 100 Gb/s；这些同样是 testbed result。更重要的结论是：在 GPU server 中存在可利用的 host CPU 预算时，控制路径可以先在软件中快速迭代；但 CPU 利用率、PCIe/NUMA 位置、NIC timestamp/ECN 可见性、QP context 和 workload 粒度决定了它是否能保持线速。[A40][B16]
+
+```text
+UCCL: existing RNIC + software-extensible endpoint
+Falcon: hardware/SmartNIC transport with programmable mechanisms
+UET: standardized wire-level transport and endpoint semantics
+```
+
+三者不是同一个层次的替代品：UCCL 更适合验证和部署 transport policy，Falcon 把更多状态和处理放进专用硬件，UET 解决协议互操作与规范化；最终系统仍需分别回答 placement、ordering、completion、拥塞和故障恢复问题。[A31][A32][A40]
+
 ## Backup Slide R1｜Rubin sparse Attention：减少 movement，但不是透明压缩
 
 ```text
@@ -1131,6 +1194,7 @@ dense QKᵀ scores in TMEM
 17. Scale-up/scale-out reliability boundary：XPU—local fabric—I/O memory appliance—routed fabric。
 18. DeepEP/NCCL EP/UltraEP/MoonEP 二维图：通信路径 × 负载均衡策略。
 19. DualPath 与 HiSparse 用两张不同层次的数据流图，避免合并。
+20. UCCL data/control split：GPU payload 走 GPUDirect，CPU engine 处理 CC/LB/order/completion，并在 UC/UD 路径处理 ACK/retry；旁边画 UC、RC、UD 三条兼容路径与信号可见性边界。
 
 ---
 
@@ -1156,6 +1220,7 @@ dense QKᵀ scores in TMEM
 - `UEC 1.0`：规范的重点是 backend scale-out；它定义 RUD/ROD、SACK、packet window、multipath 与多种 CC。不要把它当成 UALink/SUE 的同层替代，也不要声称其所有实现都采用某个单一 rate-或window-based 算法。
 - `Falcon`：官方可讲 lossy Ethernet、multipath、细粒度 RTT、hardware-enforced traffic shaping、fast retransmission、flexible ordering 与多 ULP。论文中的吞吐、Mops、tail 或丢包结果必须连同实验配置引用，不能提升为产品通用保证。
 - `ConnectX-8 PSA/DPA`：官方公开材料可确认 advanced routing、telemetry-based congestion control，以及 DOCA DPA programmable congestion-control events；当前证据不足以画 PSA 内部流水线、八平面实现或断言某段算法一定运行在哪个处理器上。
+- `UCCL`：论文 v2 描述的是在现有 RDMA NIC 上解耦 data/control path、由 host CPU 运行可扩展 transport control 的研究与实现。UC 是优先路径；RC/UD 是受 NIC 能力约束的兼容路径。论文性能数字只代表其 testbed，不外推为所有 NIC/拓扑的通用收益。当前开源仓库已扩展到 UCCL-Tran/P2P/EP，需与原论文范围分开。
 - `Scale-up/scale-out fusion`：通过 I/O memory/DPU/communication appliance 放置可靠性边界是架构选项。NetDAM 只能标为作者方案/研究设计；需要同时说明 staging、ownership、ordering、backpressure 和新增故障域。
 - `未经采用的量化数字`：不使用“5% 丢包仍 90% goodput”“Scale-Up IP 300–400 mm²”“TPU 单算子最多 512 卡”等未完成一手核验或强依赖配置的数字。
 
@@ -1208,6 +1273,7 @@ dense QKᵀ scores in TMEM
 - [A28] Muthukrishnan et al., *FinePack: Transparently Improving the Efficiency of Fine-Grained Transfers in Multi-GPU Systems*, HPCA 2023, DOI 10.1109/HPCA56546.2023.10070949: https://doi.org/10.1109/HPCA56546.2023.10070949
 - [A38] MPI Forum, *MPI: A Message-Passing Interface Standard, Version 4.1*, November 2023: https://www.mpi-forum.org/docs/mpi-4.1/mpi41-report.pdf
 - [A39] Fang and Peng, *NetDAM: Network Direct Attached Memory with Programmable In-Memory Computing ISA*, arXiv:2110.14902, 2021: https://arxiv.org/abs/2110.14902
+- [A40] Zhou et al., *UCCL-Tran: An Extensible Software Transport Layer for GPU Networking*, OSDI 2026, pp. 1143–1166: https://www.usenix.org/conference/osdi26/presentation/zhou-yang ; public preprint arXiv:2504.17307v2: https://arxiv.org/abs/2504.17307v2
 - [B1] NVIDIA NCCL Extensions / NCCL EP, commit `9f47d6eb3b60962d8157a579b4caaaa4ae6b19f4`: https://github.com/NVIDIA/nccl-extensions/tree/9f47d6eb3b60962d8157a579b4caaaa4ae6b19f4
 - [B2] Mooncake repository, commit `51e594d3a21660bdf2f6f1f11ec544b7cfb06932`: https://github.com/kvcache-ai/Mooncake/tree/51e594d3a21660bdf2f6f1f11ec544b7cfb06932
 - [B3] DeepEP repository, commit `01dc3aaac82068020353dce2c302e38153c0bfaa`: https://github.com/deepseek-ai/DeepEP/tree/01dc3aaac82068020353dce2c302e38153c0bfaa
@@ -1223,6 +1289,7 @@ dense QKᵀ scores in TMEM
 - [B13] NVIDIA NVSHMEM repository, commit `f86be2c6c390448cc4e0c32db9f27f5dbc345b67`: https://github.com/NVIDIA/nvshmem/tree/f86be2c6c390448cc4e0c32db9f27f5dbc345b67
 - [B14] ByteDance FLUX, a communication-overlapping library for tensor/expert parallelism, commit `19831ca2d820e3e782ed1d15d8b52d0898b78b26`: https://github.com/bytedance/flux/tree/19831ca2d820e3e782ed1d15d8b52d0898b78b26
 - [B15] NVIDIA CUTLASS distributed GEMM examples, commit `dcf215af68a2d08d305076c152a06f201728cd53`: https://github.com/NVIDIA/cutlass/tree/dcf215af68a2d08d305076c152a06f201728cd53/examples/65_distributed_gemm
+- [B16] UCCL repository, commit `d94b5bf2e45bd21c40ccd10163453e91fd9d30c8`; current project scope includes UCCL-Tran, UCCL-P2P and UCCL-EP: https://github.com/uccl-project/uccl/tree/d94b5bf2e45bd21c40ccd10163453e91fd9d30c8
 
 ---
 

@@ -16,6 +16,9 @@
 10. Rubin 能力明确标注公开预览状态；既有 grid-level PDL 从 `sm_90+` 开始，不称为 Blackwell 独占能力。
 11. CloudMatrix384 采用华为官方口径：它是构建在 Atlas 900 A3 SuperPoD 上的云服务实例，后者最多包含 384 个 Ascend 910C。
 12. 未找到足够一手资料确认 Ascend 950 CCU 内部微架构，因此只保留 dedicated collective engine 作为设计空间。
+13. UCCL-Tran（OSDI 2026；公开预印本 arXiv:2504.17307v2）描述的是基于现有 RDMA primitives 的 host-CPU software transport：优先 UC，兼容路径包括受限条件下的 RC 和 UD；只有 UC/UD 路径把 packet reliability 放到软件，RC 仍保留 NIC hardware reliability。它不是新 NIC，也不是自动把 RoCE/InfiniBand wire protocol 变成 UET。
+14. UCCL 的论文结果与实现细节受 testbed、NIC vendor、QP 数量、chunk size、CPU 预算和 collective shape 约束；4.5×、1.9× 及 EQDS tail-latency 数字不能外推为所有 GPU 集群的通用收益。
+15. 当前 UCCL 开源仓库的范围已经扩展到 UCCL-Tran、UCCL-P2P 和 UCCL-EP。讲稿分别引用论文与固定仓库 commit，不把后来项目能力倒推成原论文结论。
 
 ## 演讲时仍需限定
 
@@ -24,8 +27,9 @@
 - ICMS/CMX、Rubin tile-level coordination、UltraEP 和 MoonEP 等快速演进内容不讲成稳定跨版本接口。
 - BDP 公式用于估算 in-flight state 的数量级，不能直接反推芯片面积。
 - 通过 I/O memory/DPU/communication appliance 放置可靠性边界是一种架构选择，不是已经统一的行业标准。
+- UCCL 的软件控制面主要依赖 RTT/丢包等仍可见的信号；RNIC 已消费的 ECN、trim 或 vendor-specific telemetry 不会自动出现在用户态。CPU engine、host NUMA、polling、QP context 和 UD 重组开销必须纳入线速与尾延迟评估。
 ## 自动检查结果
 
 - 主讲页：72 页，编号连续且无重复。
-- 引用标签：55 个使用项与 55 个定义项闭合，无悬空引用。
+- 引用标签：57 个使用项与 57 个定义项闭合，无悬空引用。
 - 主要公式：Ring AllReduce 每 rank 传输量和两个 BDP 数量级示例已复核。

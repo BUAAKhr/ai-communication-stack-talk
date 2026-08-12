@@ -9,6 +9,7 @@
 - Blackwell 双 Die 的官方事实，以及不能从 MCM-GPU 论文反推的产品细节。
 - Scale-Up 与 Scale-Out 的语义、RTT、故障域和可靠性状态。
 - RDMA、DDP、multipath、out-of-order placement、SACK、拥塞控制和 BDP。
+- UCCL：基于现有 RDMA verbs 的 host-CPU software transport，以及它与 Falcon、UEC 的层次差异。
 - MPI、NCCL、NCCL EP、DeepEP、P2P、KV movement 与 MoE 通信。
 - compute-communication overlap、异步数据搬运、distributed kernel。
 - DeepGEMM MegaMoE 的真实 dataflow，以及与 FlashInfer CuTeDSL MegaMoE、FlashMoE 的边界。

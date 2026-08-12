@@ -55,6 +55,7 @@
 - [A31] Singhvi et al., [Falcon: A Reliable, Low Latency Hardware Transport](https://dl.acm.org/doi/10.1145/3718958.3754353), SIGCOMM 2025; [Google Cloud overview](https://cloud.google.com/blog/topics/systems/introducing-falcon-a-reliable-low-latency-hardware-transport).
 - [A37] Graham et al., [An In-Network Architecture for Accelerating Shared-Memory Multiprocessor Collectives](https://doi.org/10.1109/ISCA45697.2020.00085), ISCA 2020.
 - [A39] Fang and Peng, [NetDAM: Network Direct Attached Memory with Programmable In-Memory Computing ISA](https://arxiv.org/abs/2110.14902), 2021.
+- [A40] Zhou et al., [UCCL-Tran: An Extensible Software Transport Layer for GPU Networking](https://www.usenix.org/conference/osdi26/presentation/zhou-yang), OSDI 2026, pp. 1143–1166; [public preprint](https://arxiv.org/abs/2504.17307v2). The paper describes a host-CPU control path over existing RDMA primitives, software multipathing, control coalescing and selective recovery; reported speedups are tied to the paper's testbeds.
 
 ## Pinned Open-Source Evidence
 
@@ -73,6 +74,7 @@
 - [B13] NVIDIA [NVSHMEM](https://github.com/NVIDIA/nvshmem/tree/f86be2c6c390448cc4e0c32db9f27f5dbc345b67), commit `f86be2c6c390448cc4e0c32db9f27f5dbc345b67`.
 - [B14] ByteDance [FLUX](https://github.com/bytedance/flux/tree/19831ca2d820e3e782ed1d15d8b52d0898b78b26), commit `19831ca2d820e3e782ed1d15d8b52d0898b78b26`.
 - [B15] NVIDIA CUTLASS [distributed GEMM examples](https://github.com/NVIDIA/cutlass/tree/dcf215af68a2d08d305076c152a06f201728cd53/examples/65_distributed_gemm), commit `dcf215af68a2d08d305076c152a06f201728cd53`.
+- [B16] [UCCL](https://github.com/uccl-project/uccl/tree/d94b5bf2e45bd21c40ccd10163453e91fd9d30c8), commit `d94b5bf2e45bd21c40ccd10163453e91fd9d30c8`. The current repository spans UCCL-Tran, UCCL-P2P and UCCL-EP; this broader scope is later than the UCCL transport paper and is cited separately.
 
 ## Rapidly Evolving Public Material
 
