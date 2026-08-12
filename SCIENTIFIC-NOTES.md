@@ -19,6 +19,7 @@
 13. UCCL-Tran（OSDI 2026；公开预印本 arXiv:2504.17307v2）描述的是基于现有 RDMA primitives 的 host-CPU software transport：优先 UC，兼容路径包括受限条件下的 RC 和 UD；只有 UC/UD 路径把 packet reliability 放到软件，RC 仍保留 NIC hardware reliability。它不是新 NIC，也不是自动把 RoCE/InfiniBand wire protocol 变成 UET。
 14. UCCL 的论文结果与实现细节受 testbed、NIC vendor、QP 数量、chunk size、CPU 预算和 collective shape 约束；4.5×、1.9× 及 EQDS tail-latency 数字不能外推为所有 GPU 集群的通用收益。
 15. 当前 UCCL 开源仓库的范围已经扩展到 UCCL-Tran、UCCL-P2P 和 UCCL-EP。讲稿分别引用论文与固定仓库 commit，不把后来项目能力倒推成原论文结论。
+16. 已与前序演讲《Towards Modern Networking System》当前 PDF 的 42 页内容逐页对照。前序的 circuit/link/credit/replay/router/VC/HOL/Orderlock 作为本场前提；本场只承接到 AI workload、RDMA、Scale-Up/Scale-Out、UEC/Falcon/UCCL 和 distributed kernel。Orderlock 使用原论文限定：在论文模型中，in-order delivery、lossless transmission 与 out-of-order capability 同时成立，是该类死锁的必要充分条件。
 
 ## 演讲时仍需限定
 
@@ -28,8 +29,9 @@
 - BDP 公式用于估算 in-flight state 的数量级，不能直接反推芯片面积。
 - 通过 I/O memory/DPU/communication appliance 放置可靠性边界是一种架构选择，不是已经统一的行业标准。
 - UCCL 的软件控制面主要依赖 RTT/丢包等仍可见的信号；RNIC 已消费的 ECN、trim 或 vendor-specific telemetry 不会自动出现在用户态。CPU engine、host NUMA、polling、QP context 和 UD 重组开销必须纳入线速与尾延迟评估。
+- 前序 PDF 当前只包含到 Part I 的 1.3 标题页；目录列出的 management-domain 后续正文、NIC microarchitecture 和 tile-based transaction 部分没有出现在该文件中。对这些未交付页面不宣称完成逐页冲突核验；只根据术语表预先隔离 `Software Connection`、`Reliable Tunnel`、`Bounded Transaction` 与 RDMA/UCCL/compute tile 的同名异义。
 ## 自动检查结果
 
 - 主讲页：72 页，编号连续且无重复。
-- 引用标签：57 个使用项与 57 个定义项闭合，无悬空引用。
+- 引用标签：58 个使用项与 58 个定义项闭合，无悬空引用。
 - 主要公式：Ring AllReduce 每 rank 传输量和两个 BDP 数量级示例已复核。

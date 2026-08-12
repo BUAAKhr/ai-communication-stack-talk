@@ -56,6 +56,7 @@
 - [A37] Graham et al., [An In-Network Architecture for Accelerating Shared-Memory Multiprocessor Collectives](https://doi.org/10.1109/ISCA45697.2020.00085), ISCA 2020.
 - [A39] Fang and Peng, [NetDAM: Network Direct Attached Memory with Programmable In-Memory Computing ISA](https://arxiv.org/abs/2110.14902), 2021.
 - [A40] Zhou et al., [UCCL-Tran: An Extensible Software Transport Layer for GPU Networking](https://www.usenix.org/conference/osdi26/presentation/zhou-yang), OSDI 2026, pp. 1143–1166; [public preprint](https://arxiv.org/abs/2504.17307v2). The paper describes a host-CPU control path over existing RDMA primitives, software multipathing, control coalescing and selective recovery; reported speedups are tied to the paper's testbeds.
+- [A41] Jiang et al., [Orderlock: A New Type of Deadlock and its Implications on High Performance Network Protocol Design](https://doi.org/10.1145/3718958.3750497), SIGCOMM 2025, pp. 575–591. In its model, simultaneous in-order delivery, lossless transmission and out-of-order capability form the necessary and sufficient condition for Orderlock.
 
 ## Pinned Open-Source Evidence
 

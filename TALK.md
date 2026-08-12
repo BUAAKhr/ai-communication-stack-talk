@@ -27,6 +27,18 @@ link / switch / NIC / memory hierarchy
 3. 谁发起、谁搬运、谁执行 reduce？
 4. 慢来自带宽、时延、拥塞、抖动、负载不均，还是额外内存副本？
 
+## 与前序演讲的衔接
+
+前序演讲《Towards Modern Networking System》已经从 circuit、VALID/READY、credit、link replay 推导到 router、VC、HOL blocking、deadlock，以及 Infiniband 的逐跳无损与端到端可靠。本场把这些机制当作已建立的底座，重点转向它们在 AI workload、RDMA、Scale-Up/Scale-Out 和 distributed kernel 中如何组合。
+
+建议用约 60–90 秒完成这个承接：
+
+- 前序第 19–24 页把 `lossless` 解释为面对潜在 overflow 时的先验 credit/backpressure 策略，把 `lossy` 解释为后验 ACK/NAK/retry 策略，并提醒 `failure/rot` 是另一个维度；本场在 Slide 24–25 继续拆分 FEC、LLR、flow control、端到端 retry 和 runtime recovery。
+- 前序第 29–38 页已经讲过 HOL、VC、因果依赖和 Orderlock；本场不重复推导，而是在 Slide 26–31 讨论多路径、direct placement、completion、SACK、UET、Falcon 与 UCCL 的工程取舍。
+- 前序第 39–41 页留下的“lossy fabric router”问题，正是本场介绍 IRN、UEC、Falcon、UCCL 以及 selective recovery 的入口。
+
+前序材料中的 `Software Connection`、`Reliable Tunnel`、`Physical Path` 和 `Bounded Transaction` 是一套管理与事务词汇；它们不要直接等同为 RDMA QP、RC 或 UCCL 的 32 KiB chunk。后文会分别说明这些对象的边界。
+
 ```text
 0. Why data moves
 1. Where data moves
@@ -324,7 +336,7 @@ Torus cost: path diversity / bisection depend on partition shape
 | 常用保护 | FEC、link replay、credit/lossless flow control | multipath、端到端 ACK/retry、congestion control |
 | 主要代价 | XPU die area、短距 replay/queue buffer | per-flow state、timer、reorder、长 BDP buffer |
 
-讲师说明：边界并不由“是否使用 Ethernet”自动决定。工程上常把问题重写为 local/in-rack 与 inter-rack：前者可以用简单、低状态的链路级保护，后者必须容忍更多路径、故障与排队。UALink、SUE、UET/RDMA 的差异，本质上是可靠性状态放在哪里、覆盖多大故障域。[A13][A32][A33][A34]
+讲师说明：边界并不由“是否使用 Ethernet”自动决定。工程上常把问题重写为 local/in-rack 与 inter-rack：前者可以用简单、低状态的链路级保护，后者必须容忍更多路径、故障与排队。这里沿用前序演讲的机制化区分：lossless 主要回答“如何避免接收端溢出”，reliable 还要回答“损坏、缺失、重路由和端点故障如何处理”；行业文档有时会更宽泛地使用 lossless，因此演讲中始终说明所指层次。另一个术语边界是：前序的 `Management Domain` 指一个 OS 的最终裁决范围；本页的 scale-up/scale-out domain 是 RTT、拓扑和故障预算的工程分区，两者可以重合但不等价。UALink、SUE、UET/RDMA 的差异，本质上是可靠性状态放在哪里、覆盖多大故障域。[A13][A32][A33][A34]
 
 ---
 # 2. What the Fabric Guarantees: Semantics, Transport and Reliability (38-62 min)
@@ -355,7 +367,7 @@ Completion: 何时可以通知 producer/consumer 操作完成？
 Ordering:   哪些事务必须先可见，何时允许 fence/commit？
 ```
 
-讲师说明：这四件事经常被一个“可靠传输”词汇混在一起。支持 out-of-order arrival 不代表允许 out-of-order completion；数据已经写入目标地址，也不代表 memory model 已允许消费者观察它。Scale-up 还要把 completion 与 acquire/release、scope、atomicity 和错误响应对齐。
+讲师说明：这四件事经常被一个“可靠传输”词汇混在一起。支持 out-of-order arrival 不代表允许 out-of-order completion；数据已经写入目标地址，也不代表 memory model 已允许消费者观察它。Scale-up 还要把 completion 与 acquire/release、scope、atomicity 和错误响应对齐。Orderlock 论文在其模型中证明，in-order delivery、lossless transmission 与 out-of-order capability 同时成立，是该类死锁的必要充分条件；本场的 direct placement 只是把缺口定位和数据落点显式化，并没有取消 completion、fence 或 buffer 上限。[A41]
 
 ## Slide 24｜可靠性是分层覆盖，不是一个开关
 
@@ -367,7 +379,7 @@ Ordering:   哪些事务必须先可见，何时允许 fence/commit？
 | End-to-end transport | 缺失检测、ACK/retry、duplicate handling | 节点进程状态丢失、语义级回滚 |
 | Runtime / application | rank failure、checkpoint、idempotence | 纳秒级链路恢复 |
 
-讲师说明：因此“lossless”不是“end-to-end reliable”的同义词。UALink 1.0 的正常路径由 FEC/CRC、每段 link-level replay 与 flow control 组成，但规范也定义了 drop、isolation 和 completion timeout 来处理不可透明恢复的错误；这比宣称“永不丢包”准确得多。[A33]
+讲师说明：因此“lossless”不是“end-to-end reliable”的同义词。在前序演讲采用的机制化语境中，它首先描述 overflow 的处理策略；即使正常路径不发生拥塞丢弃，链路仍可能遇到 bit error、不可恢复的 replay、路由黑洞或端点故障。UALink 1.0 的正常路径由 FEC/CRC、每段 link-level replay 与 flow control 组成，但规范也定义了 drop、isolation 和 completion timeout 来处理不可透明恢复的错误；这比宣称“永不丢包”准确得多。[A33]
 
 ## Slide 25｜Lossless 能减少 drop，但可能放大排队故障
 
@@ -393,7 +405,7 @@ one message / transaction
    └─ packet 2 → path C ─┘→ completion only after required bytes arrive
 ```
 
-讲师说明：多路径的目标是减少 ECMP hash collision、避开拥塞和故障路径。代价不是一定要把全部 payload 暂存在巨型 reorder buffer，而是每个分段必须携带足够的 identity/offset，接收端还要跟踪 gap、duplicate 与 completion。UEC 明确规定跨不同路径不保证到达顺序；Google Falcon 与 OpenAI MRC 也把 multipath 和可靠连接语义结合起来。[A9][A10][A31][A32]
+讲师说明：多路径的目标是减少 ECMP hash collision、避开拥塞和故障路径。代价不是一定要把全部 payload 暂存在巨型 reorder buffer，而是每个分段必须携带足够的 identity/offset，接收端还要跟踪 gap、duplicate 与 completion。这个设计必须明确选择“允许乱序持有、最后按 completion/fence 对上层提交”的语义；如果还同时要求论文定义的 in-order delivery 与 lossless transmission，就会进入 Orderlock 风险区。[A41] UEC 明确规定跨不同路径不保证到达顺序；Google Falcon 与 OpenAI MRC 也把 multipath 和可靠连接语义结合起来。[A9][A10][A31][A32]
 
 UCCL-Tran 给出了一个具体的 endpoint 侧实现：在不改现有 RNIC 的前提下，优先用 UC 绕过 NIC 固化的可靠性与拥塞控制，把 data path 留给 GPUDirect，把可扩展 transport control 放到 host CPU；NIC 不支持 UC 时，再按能力退回到关闭硬件 CC 的 RC，或用 UD 加 scatter-gather。它通过多 QP 的细粒度 path selection 利用 ECMP 路径；软件统一管理跨 QP 的顺序与完成，并在 UC/UD 路径承担 ACK/retry，RC 路径则仍保留 NIC 的 packet reliability。[A40][B16]
 
@@ -577,7 +589,7 @@ endpoint partials → aggregation tree / multicast-reduce engine → result
 | Shared-memory fabric / NVLS 类 | 减少 endpoint 搬运与 HBM 干扰 | memory semantic、counter、地址域耦合 |
 | Dedicated on-package collective engine（设计点） | 距计算更近 | silicon area、协议耦合、可编程性 |
 
-讲师说明：对 AI workload，更重要的收益有时是少占 HBM/L2/SM，而不只是缩短一次 AllReduce。固定、可结合的 reduction 容易下沉；DeepEP 式动态 token dispatch、路由和大量状态并不天然适合交换机。SHARP 与 NVSwitch shared-memory collective 论文可作为两类公开案例。`on-package collective engine` 在本页只是一个设计点；当前采用的一手资料不足以确认所谓 Ascend 950 CCU 的内部微架构，因此不把它作为已披露产品事实。[A14][A37]
+讲师说明：对 AI workload，更重要的收益有时是少占 HBM/L2/SM，而不只是缩短一次 AllReduce。固定、可结合的 reduction 容易下沉；DeepEP 式动态 token dispatch、路由和大量状态并不天然适合交换机。SHARP 与 NVSwitch shared-memory collective 论文可作为两类公开案例。前序术语表里的 `Aggregation Engine` 被定义为占用地址空间的端点；本页的 SHARP 是 switch/fabric reduction placement，二者不是同一个架构对象。`on-package collective engine` 在本页也只是一个设计点；当前采用的一手资料不足以确认所谓 Ascend 950 CCU 的内部微架构，因此不把它作为已披露产品事实。[A14][A37]
 
 ---
 ## 3.3 P2P and Object/State Movement
@@ -1058,6 +1070,8 @@ ibstat
 
 ## Backup Slide T2｜细粒度 transaction：wire efficiency 与 packing latency 的交换
 
+前序演讲使用的 `Bounded Transaction` 是具有稳定身份、有限大小和一次退休语义的协议工作单元；本场的 RDMA message、UCCL chunk、通信 tile 和 GEMM tile 可能承担相似的工程作用，但不是同一个标准对象。尤其不要把“32–128 KiB tile”直接说成某个 RNIC、UET 或 XPU 协议的固定事务大小。
+
 ```text
 wire efficiency = useful payload bytes / total wire bytes
 
@@ -1274,6 +1288,7 @@ dense QKᵀ scores in TMEM
 - [A38] MPI Forum, *MPI: A Message-Passing Interface Standard, Version 4.1*, November 2023: https://www.mpi-forum.org/docs/mpi-4.1/mpi41-report.pdf
 - [A39] Fang and Peng, *NetDAM: Network Direct Attached Memory with Programmable In-Memory Computing ISA*, arXiv:2110.14902, 2021: https://arxiv.org/abs/2110.14902
 - [A40] Zhou et al., *UCCL-Tran: An Extensible Software Transport Layer for GPU Networking*, OSDI 2026, pp. 1143–1166: https://www.usenix.org/conference/osdi26/presentation/zhou-yang ; public preprint arXiv:2504.17307v2: https://arxiv.org/abs/2504.17307v2
+- [A41] Jiang et al., *Orderlock: A New Type of Deadlock and its Implications on High Performance Network Protocol Design*, SIGCOMM 2025, pp. 575–591, DOI 10.1145/3718958.3750497: https://doi.org/10.1145/3718958.3750497
 - [B1] NVIDIA NCCL Extensions / NCCL EP, commit `9f47d6eb3b60962d8157a579b4caaaa4ae6b19f4`: https://github.com/NVIDIA/nccl-extensions/tree/9f47d6eb3b60962d8157a579b4caaaa4ae6b19f4
 - [B2] Mooncake repository, commit `51e594d3a21660bdf2f6f1f11ec544b7cfb06932`: https://github.com/kvcache-ai/Mooncake/tree/51e594d3a21660bdf2f6f1f11ec544b7cfb06932
 - [B3] DeepEP repository, commit `01dc3aaac82068020353dce2c302e38153c0bfaa`: https://github.com/deepseek-ai/DeepEP/tree/01dc3aaac82068020353dce2c302e38153c0bfaa

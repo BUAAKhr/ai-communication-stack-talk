@@ -20,6 +20,7 @@
 - [完整逐页讲稿](TALK.md)
 - [参考资料](REFERENCES.md)
 - [科学性审校说明](SCIENTIFIC-NOTES.md)
+- [前序演讲对齐说明](PREDECESSOR-ALIGNMENT.md)
 
 ## 证据约定
 
