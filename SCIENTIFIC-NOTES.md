@@ -19,7 +19,15 @@
 13. UCCL-Tran（OSDI 2026；公开预印本 arXiv:2504.17307v2）描述的是基于现有 RDMA primitives 的 host-CPU software transport：优先 UC，兼容路径包括受限条件下的 RC 和 UD；只有 UC/UD 路径把 packet reliability 放到软件，RC 仍保留 NIC hardware reliability。它不是新 NIC，也不是自动把 RoCE/InfiniBand wire protocol 变成 UET。
 14. UCCL 的论文结果与实现细节受 testbed、NIC vendor、QP 数量、chunk size、CPU 预算和 collective shape 约束；4.5×、1.9× 及 EQDS tail-latency 数字不能外推为所有 GPU 集群的通用收益。
 15. 当前 UCCL 开源仓库的范围已经扩展到 UCCL-Tran、UCCL-P2P 和 UCCL-EP。讲稿分别引用论文与固定仓库 commit，不把后来项目能力倒推成原论文结论。
-16. 已与前序演讲《Towards Modern Networking System》当前 PDF 的 42 页内容逐页对照。前序的 circuit/link/credit/replay/router/VC/HOL/Orderlock 作为本场前提；本场只承接到 AI workload、RDMA、Scale-Up/Scale-Out、UEC/Falcon/UCCL 和 distributed kernel。Orderlock 使用原论文限定：在论文模型中，in-order delivery、lossless transmission 与 out-of-order capability 同时成立，是该类死锁的必要充分条件。
+16. 已与前序演讲《Towards Modern Networking System》更新版 PPTX 的 64 页内容逐页对照，并核对 OOXML 文本、图示和 notes part。新版已包含 management/domain、network microarchitecture、RC QP critique、bounded transaction、Tile Load/Store、SQ/CQ、synchronization 与 unified-system 章节；本场定位改为用 AI workload 和现有实现验证这些架构主张，而不是只承接旧 PDF 的 Part I。
+17. 前序的 `Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 被保留为其架构对象，不与 RDMA QP/RC、UET PDC/CCC、UCCL connection/chunk 或 compute tile 混用。
+18. 前序对传统 RC QP 的批评被限定为常见耦合模式：不同 RNIC/transport 已提供 SRQ、DC、adaptive routing、selective recovery 等扩展，不把单路径、Go-Back-N、PFC 依赖和 QP fatal error 说成所有 RC 的永久定义。
+19. Tile/address-style programming 被解释为把 queue bookkeeping 移入 compiler/runtime/device engine；底层有限 queue、credit、translation/protection、retry、completion 和 backpressure 仍然存在。`32–128 KiB` 是设计建议，不是跨 workload/协议的固定最优范围。
+20. 远端资源映射进入地址空间不等于自动获得本地 memory semantics；跨管理域仍需 capability、撤销/generation、partial completion、unknown result、endpoint reset、memory scope 与一致性边界。
+21. Orderlock 使用原论文限定：在论文模型中，in-order delivery、lossless transmission 与 out-of-order capability 同时成立，是该类死锁的必要充分条件。
+22. 前序 p.43 的“同一台计算机共享同一份内存真相”不外推到所有离散 GPU/NIC 系统；addressability、coherence、consistency scope、IOMMU/PASID 和 ownership 必须分别确认。前序 p.50 的 UEC state placement 也只作为实现假设，不作为 UET wire specification 的规定。
+23. “不承诺伪 exactly-once”被限定为 transport 在不确定故障后不能单独判断远端应用动作；不否认带 durable deduplication、transaction/consensus 的上层系统在明确模型下提供 exactly-once effect。
+24. 前序 p.44–48 仍含未完成的 audio/gaming/Ethernet 草稿页。本场不使用“音频设备不用中断”或 timer polling 的类比作为网络科学结论。
 
 ## 演讲时仍需限定
 
@@ -29,7 +37,8 @@
 - BDP 公式用于估算 in-flight state 的数量级，不能直接反推芯片面积。
 - 通过 I/O memory/DPU/communication appliance 放置可靠性边界是一种架构选择，不是已经统一的行业标准。
 - UCCL 的软件控制面主要依赖 RTT/丢包等仍可见的信号；RNIC 已消费的 ECN、trim 或 vendor-specific telemetry 不会自动出现在用户态。CPU engine、host NUMA、polling、QP context 和 UD 重组开销必须纳入线速与尾延迟评估。
-- 前序 PDF 当前只包含到 Part I 的 1.3 标题页；目录列出的 management-domain 后续正文、NIC microarchitecture 和 tile-based transaction 部分没有出现在该文件中。对这些未交付页面不宣称完成逐页冲突核验；只根据术语表预先隔离 `Software Connection`、`Reliable Tunnel`、`Bounded Transaction` 与 RDMA/UCCL/compute tile 的同名异义。
+- 前序 p.51–53 的逐 region reliability、百万连接、128 KiB transaction/1 KiB packet 和 tracker 配置，以及 p.52 的“默认无需拥塞调参”均作为目标设计或数量级示例，不当作 UEC、SUE、UALink、Falcon、UCCL 或当前白牌 Ethernet 的共同保证。
+- 前序 p.57 的 SQ/CQ 趋势判断、p.58 的同步延迟表和 p.62 的 memory-wall 修辞不作为独立科学证据；主讲中的事实仍回溯至标准、论文、官方文档和固定代码版本。
 ## 自动检查结果
 
 - 主讲页：72 页，编号连续且无重复。

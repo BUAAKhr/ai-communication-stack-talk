@@ -4,7 +4,7 @@
 
 ## 内容
 
-- 72 页主讲内容，建议时长约 130 分钟。
+- 72 页主讲内容，独立讲授约 130 分钟；紧接前序演讲时建议压缩为约 121 分钟。
 - AI server 内的 PCIe、NVLink/NVSwitch、xGMI、HCCS 与 NUMA。
 - Blackwell 双 Die 的官方事实，以及不能从 MCM-GPU 论文反推的产品细节。
 - Scale-Up 与 Scale-Out 的语义、RTT、故障域和可靠性状态。
@@ -29,6 +29,8 @@
 - `[C]`：厂商公开预告或披露仍不完整的快速演进能力。
 
 产品事实、学术方案和基于公开材料的推断在讲稿中分开表达。开源实现尽量固定到 commit，避免项目后续演进改变原始语义。
+
+本稿还与前序演讲《Towards Modern Networking System》更新版 64 页 PPTX 完成逐页对齐。前序负责从 link/network 推导 connection/path 解耦与 tile-based networking 的目标架构；本稿负责用 AI workload、公开协议和实现检验这些抽象，并明确区分设计主张与已标准化产品事实。源 PPTX 未收入本公开仓库；版本哈希和详细边界见 [前序演讲对齐说明](PREDECESSOR-ALIGNMENT.md)。
 
 ## 校验
 

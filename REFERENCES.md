@@ -8,6 +8,8 @@
 - `[B]`：官方开源仓库、项目文档或固定版本的实现证据。
 - `[C]`：厂商公开预告或披露仍不完整的快速演进能力。
 
+前序演讲 `Towards Modern Networking System.pptx` 作为议程衔接和术语对齐材料单独记录在 [PREDECESSOR-ALIGNMENT.md](PREDECESSOR-ALIGNMENT.md)。它包含讲者原创的架构提案与趋势判断，因此不编入 `[A]/[B]/[C]` 科学证据编号；本稿的产品事实、协议字段和定量结论仍由下列一手资料支持。
+
 ## 官方架构、产品与软件文档
 
 - [A1] NVIDIA, [NVLink and NVSwitch](https://www.nvidia.com/en-us/data-center/nvlink/).

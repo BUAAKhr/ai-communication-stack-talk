@@ -1,8 +1,8 @@
 ﻿# AI Communication Stack: From Workload to Dataflow
 
-> 公开审校稿 v0.7，资料核对日期：2026-08-12。
+> 公开审校稿 v0.8，资料核对日期：2026-08-12。
 >
-> 建议时长：128–132 分钟；主讲 72 页，另附备份页、demo 与制图建议。本文先按逐页脚本写，便于下一步直接改成 PPT。
+> 独立讲授建议时长：128–132 分钟；紧接《Towards Modern Networking System》联讲时建议约 120–122 分钟。主讲 72 页，另附备份页、demo 与制图建议。本文先按逐页脚本写，便于下一步直接改成 PPT。
 >
 > 证据标签：`[A]` 官方规范、官方文档或正式论文；`[B]` 官方开源仓库/项目文档；`[C]` 厂商公开演讲、产品预告或尚未充分披露的 2026 新项目。`[C]` 内容适合讲趋势，不宜讲成稳定产品事实。涉及产品微架构时再区分“官方产品事实 / 学术研究方案 / 基于公开材料的推断”，不能用论文方案反推量产芯片实现。
 
@@ -29,15 +29,15 @@ link / switch / NIC / memory hierarchy
 
 ## 与前序演讲的衔接
 
-前序演讲《Towards Modern Networking System》已经从 circuit、VALID/READY、credit、link replay 推导到 router、VC、HOL blocking、deadlock，以及 Infiniband 的逐跳无损与端到端可靠。本场把这些机制当作已建立的底座，重点转向它们在 AI workload、RDMA、Scale-Up/Scale-Out 和 distributed kernel 中如何组合。
+前序演讲《Towards Modern Networking System》已经完成了三步推导：先从 circuit、VALID/READY、credit 与 link replay 建立 link/network 基础；再提出把 software connection、reliable tunnel 与 physical path 解耦；最后把 bounded transaction、tile load/store、显式 fence 和地址空间扩展作为现代网络的候选抽象。本场把这些机制与架构主张当作起点，重点用 AI workload、现有协议、公开产品和开源实现检验：哪些已经落地，哪些仍是设计空间，以及状态与成本最终落在哪里。
 
-建议用约 60–90 秒完成这个承接：
+建议用约 90–120 秒完成这个承接：
 
-- 前序第 19–24 页把 `lossless` 解释为面对潜在 overflow 时的先验 credit/backpressure 策略，把 `lossy` 解释为后验 ACK/NAK/retry 策略，并提醒 `failure/rot` 是另一个维度；本场在 Slide 24–25 继续拆分 FEC、LLR、flow control、端到端 retry 和 runtime recovery。
-- 前序第 29–38 页已经讲过 HOL、VC、因果依赖和 Orderlock；本场不重复推导，而是在 Slide 26–31 讨论多路径、direct placement、completion、SACK、UET、Falcon 与 UCCL 的工程取舍。
-- 前序第 39–41 页留下的“lossy fabric router”问题，正是本场介绍 IRN、UEC、Falcon、UCCL 以及 selective recovery 的入口。
+- 前序第 19–41 页已经讲过 credit/replay、lossless/lossy、HOL/VC、因果依赖、Orderlock 与 InfiniBand；本场在 Slide 23–32 直接讨论 delivery、placement、completion、ordering、多路径和状态成本，不再重讲链路与路由器基础。
+- 前序第 43–53 页提出 management/domain、connection/tunnel/path 解耦，并批评传统 RC QP 将身份、顺序、可靠性、路径和异步队列耦合在一起；本场用 UET、Falcon、UCCL 和现有 RNIC 分别说明 wire protocol、hardware transport、software transport 与 verbs compatibility 各能解开哪一层。
+- 前序第 55–61 页提出 bounded tile transaction、Tile Load/Store、显式 Fence 和地址空间化设备；本场用 TMA、NVSHMEM、NCCL Device API、TileLink、distributed GEMM 与 MegaMoE 说明 tile dataflow 如何落地，同时继续核算 queue、buffer、completion、authorization 与 failure state。
 
-前序材料中的 `Software Connection`、`Reliable Tunnel`、`Physical Path` 和 `Bounded Transaction` 是一套管理与事务词汇；它们不要直接等同为 RDMA QP、RC 或 UCCL 的 32 KiB chunk。后文会分别说明这些对象的边界。
+这里有一个重要口径：前序后半部分同时包含架构原则、候选抽象和趋势判断，不应全部讲成已经标准化的产品事实。其 `Software Connection`、`Reliable Tunnel`、`Physical Path`、`DMA Context` 与 `Bounded Transaction` 是一套提案词汇；它们不要直接等同为 RDMA QP、RC、UET PDC、UCCL connection/chunk 或 GEMM tile。前序所说“Tile Load/Store 取代显式队列编程”，在本场解释为应用接口与调度抽象上移，不解释为物理队列、backpressure、replay 和 completion state 消失。
 
 ```text
 0. Why data moves
@@ -58,6 +58,8 @@ link / switch / NIC / memory hierarchy
 | 4. How we shorten the critical path | 50–71 | 34 min |
 | 总结 | 72 | 2 min |
 | **总计** | **72** | **130 min** |
+
+联讲版不删除页面，但调整讲述密度：Slide 21–25 作为前序结论的 6 分钟复盘，Slide 26–33 用约 14 分钟聚焦 UET/Falcon/UCCL、multipath 与 state placement；省出的约 9 分钟留给 Slide 44–62 的 EP、distributed kernel 和 MegaMoE。这样总时长约 121 分钟，并避免重复讲 credit、lossless/lossy、Orderlock 与 SQ/CQ 的基本动机。
 
 ---
 
@@ -336,7 +338,7 @@ Torus cost: path diversity / bisection depend on partition shape
 | 常用保护 | FEC、link replay、credit/lossless flow control | multipath、端到端 ACK/retry、congestion control |
 | 主要代价 | XPU die area、短距 replay/queue buffer | per-flow state、timer、reorder、长 BDP buffer |
 
-讲师说明：边界并不由“是否使用 Ethernet”自动决定。工程上常把问题重写为 local/in-rack 与 inter-rack：前者可以用简单、低状态的链路级保护，后者必须容忍更多路径、故障与排队。这里沿用前序演讲的机制化区分：lossless 主要回答“如何避免接收端溢出”，reliable 还要回答“损坏、缺失、重路由和端点故障如何处理”；行业文档有时会更宽泛地使用 lossless，因此演讲中始终说明所指层次。另一个术语边界是：前序的 `Management Domain` 指一个 OS 的最终裁决范围；本页的 scale-up/scale-out domain 是 RTT、拓扑和故障预算的工程分区，两者可以重合但不等价。UALink、SUE、UET/RDMA 的差异，本质上是可靠性状态放在哪里、覆盖多大故障域。[A13][A32][A33][A34]
+讲师说明：边界并不由“是否使用 Ethernet”自动决定。工程上常把问题重写为 local/in-rack 与 inter-rack：前者可以用简单、低状态的链路级保护，后者必须容忍更多路径、故障与排队。这里沿用前序演讲的机制化区分：lossless 主要回答“如何避免接收端溢出”，reliable 还要回答“损坏、缺失、重路由和端点故障如何处理”；行业文档有时会更宽泛地使用 lossless，因此演讲中始终说明所指层次。另一个术语边界是：前序将 `Management Domain` 定义为一个 OS 最终裁决资源、映射和授权的范围，并在第 43 页又用 `Domain` 表示共享同一份内存真相的范围；两者都不是 scale-up 的同义词。这里的 scale-up/scale-out domain 是 RTT、拓扑、语义和故障预算的工程分区，可能与管理域或一致性域重合，但不能由名称自动推出。UALink、SUE、UET/RDMA 的差异，本质上是可靠性状态放在哪里、覆盖多大故障域。[A13][A32][A33][A34]
 
 ---
 # 2. What the Fabric Guarantees: Semantics, Transport and Reliability (38-62 min)
@@ -447,6 +449,8 @@ MRC direction:
 ---
 ## 2.4 Congestion Control, Retry and State Placement
 
+前序第 50 页对传统 RC QP 的批评可以作为这一节的设计问题，但需要限定范围：IB/RoCE QP 的确常把寻址、PSN/ordering、reliability、path selection 与 SQ/RQ/CQ progress 绑定在一个硬件对象及其关联状态上；不同代际 RNIC 已提供多 QP、shared receive queue、DC transport、adaptive routing、selective repeat 或厂商扩展，不能把“单路径、Go-Back-N、PFC、出错即杀 QP”写成所有 RC 实现永久不变的定义。真正的问题是这些轴能否独立演进，以及状态应由 NIC SRAM、host memory、DPA 还是软件 runtime 承担。[A29][A31][A32][A40]
+
 ## Slide 30｜拥塞控制：rate/window/credit/telemetry 是设计轴
 
 | 设计轴 | 典型选择 |
@@ -473,6 +477,8 @@ UCCL-Tran 的取舍是把控制决策从 packet 粒度放宽到数据 chunk/RTT 
 讲师说明：这些不是同层、同目标产品的跑分表。UALink/SUE 面向短距 scale-up，UET 1.0 的重点是 backend scale-out。Broadcom 官方规范称 SUE Lite 通过移除 reliable transport、congestion control、AXI datapath 等简化，使“整个 SUE IP”最多缩小 50%；MAC/Link/PHY 大小不变，也不等于整个 XPU I/O die 减半。[A32][A33][A34]
 
 UCCL 与 Falcon/UEC 的关系也要分开：UCCL 是基于现有 RNIC verbs 的软件 endpoint/transport 实现，目标是快速试验并部署新的 control policy；Falcon 更接近硬件或 SmartNIC 中的可编程 transport；UEC 是 wire-level 规范。UCCL 的 multipath 不自动让底层 wire protocol 变成 UET，也不保证跨厂商 NIC 拥有相同的硬件能力。[A31][A32][A40][B16]
+
+这也给出了对前序 `Software Connection / Reliable Tunnel / Physical Path` 分层的现实映射：UET 的 PDC/CCC、Falcon 的连接与 subflow、UCCL 的 logical connection 与共享 QP pool 都在尝试把应用关系、可靠传输状态和实际路径拆开，但对象、wire identity、failure semantics 与 state placement 并不相同。它们是同一个设计方向的不同实例，不是互相可替换的术语。
 
 ## Slide 32｜BDP 最终会变成 buffer、状态与 Die 面积
 
@@ -791,6 +797,8 @@ Lifetime:    buffer / cache line 何时可以复用或驱逐？
 
 讲师说明：单卡 kernel 常把三者压在同一个线程控制流里；TMA、TMEM 和远端通信把它们拆开。`mbarrier` 回答本地异步操作何时完成；remote counter/flag 回答对端数据何时可见；cache eviction priority 管的是数据生命周期提示。通信进入 kernel 后，优化对象不再只是 payload bandwidth，而是 payload、completion 与 lifetime 三条路径能否一起流水。
 
+前序所倡议的 `Tile Load / Tile Store + 少量同步原语` 正好可以作为这一页的编程目标：让 compiler/runtime 生成地址、分块、排队和完成 bookkeeping，而不是让 kernel 作者逐条管理 SQE/CQE。但抽象隐藏的是软件接口，不是物理资源。底层仍必须有有限 queue/credit、outstanding tracker、protection/translation、retry 或 error state；一旦跨管理域，还要回答 capability、撤销、generation、partial completion 与 endpoint failure。因而“地址语义”与“队列实现”不是非此即彼，常见实现会用地址式 API 驱动队列式硬件。
+
 ## Slide 57｜Rubin MoE：一个 layout，运行时选择 expert
 
 屏幕正文：
@@ -853,7 +861,7 @@ remote symmetric memory / NIC queues
 signals, barriers, credits
 ```
 
-讲师说明：设计理念仍是 asynchronous execution + pipeline overlap，但多了 remote completion、跨 rank memory ordering、故障与 backpressure。它是单卡 kernel dataflow 的延伸，不是完全不同的优化学科。回扣 Slide 56：分布式 kernel 同样要分别设计 payload、completion 与 buffer/cache lifetime；Rubin counted writes 只是 scale-up completion 的一个具体例子。
+讲师说明：设计理念仍是 asynchronous execution + pipeline overlap，但多了 remote completion、跨 rank memory ordering、故障与 backpressure。它是单卡 kernel dataflow 的延伸，不是完全不同的优化学科。回扣 Slide 56：分布式 kernel 同样要分别设计 payload、completion 与 buffer/cache lifetime；Rubin counted writes 只是 scale-up completion 的一个具体例子。前序提出的“网络接入 memory hierarchy 出口”是有价值的目标抽象，但 remote miss 与 local cache miss 的失败语义不同：远端会发生授权撤销、路径分区、节点重启和未知结果，不能只靠地址映射把它们自动变成本地内存事件。
 
 ## Slide 61｜DSL 与项目版图
 
@@ -1070,7 +1078,7 @@ ibstat
 
 ## Backup Slide T2｜细粒度 transaction：wire efficiency 与 packing latency 的交换
 
-前序演讲使用的 `Bounded Transaction` 是具有稳定身份、有限大小和一次退休语义的协议工作单元；本场的 RDMA message、UCCL chunk、通信 tile 和 GEMM tile 可能承担相似的工程作用，但不是同一个标准对象。尤其不要把“32–128 KiB tile”直接说成某个 RNIC、UET 或 XPU 协议的固定事务大小。
+前序演讲使用的 `Bounded Transaction` 是具有稳定身份、有限大小和一次退休语义的候选协议工作单元；本场的 RDMA message、UCCL chunk、通信 tile 和 GEMM tile 可能承担相似的工程作用，但不是同一个标准对象。前序给出的 `32–128 KiB` 是设计建议，不是跨 workload 的科学常数：UCCL 默认 32 KiB 来自其 CPU/control-coalescing 取舍，GEMM tile 由 dtype、layout、SMEM/TMEM 与并行策略决定，EP token payload 和 KV block 又是另一套粒度。讲稿不能把这个范围说成某个 RNIC、UET、SUE、UALink 或 XPU 已规定的事务大小。
 
 ```text
 wire efficiency = useful payload bytes / total wire bytes
@@ -1235,6 +1243,10 @@ dense QKᵀ scores in TMEM
 - `Falcon`：官方可讲 lossy Ethernet、multipath、细粒度 RTT、hardware-enforced traffic shaping、fast retransmission、flexible ordering 与多 ULP。论文中的吞吐、Mops、tail 或丢包结果必须连同实验配置引用，不能提升为产品通用保证。
 - `ConnectX-8 PSA/DPA`：官方公开材料可确认 advanced routing、telemetry-based congestion control，以及 DOCA DPA programmable congestion-control events；当前证据不足以画 PSA 内部流水线、八平面实现或断言某段算法一定运行在哪个处理器上。
 - `UCCL`：论文 v2 描述的是在现有 RDMA NIC 上解耦 data/control path、由 host CPU 运行可扩展 transport control 的研究与实现。UC 是优先路径；RC/UD 是受 NIC 能力约束的兼容路径。论文性能数字只代表其 testbed，不外推为所有 NIC/拓扑的通用收益。当前开源仓库已扩展到 UCCL-Tran/P2P/EP，需与原论文范围分开。
+- `前序演讲的未来架构`：`Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 是前序讲者定义的体系结构对象，不是当前标准协议的通用术语。讲稿只把它们作为分析框架，不宣称 UET、Falcon、UCCL、SUE 或 UALink 已采用同一对象模型。
+- `传统 RC QP`：QP 常把寻址、顺序、可靠性、路径和 queue progress 关联起来，但不同 RNIC 与传输类型已有 SRQ/DC/adaptive routing/selective recovery 等扩展；不使用“所有 RC 永远单路径、Go-Back-N、依赖 PFC、出错必杀 QP”的绝对表述。
+- `Tile Load/Store 与 SQ/CQ`：地址式/tile 式 API 可以把 SQE/CQE bookkeeping 移入 compiler/runtime 或 device engine，但不能消灭有限 queue、credit、translation/protection、retry、completion 和 backpressure。`32–128 KiB` 只作为前序架构的建议范围，不当作跨 workload 或协议的固定最优值。
+- `跨机器 memory hierarchy`：把远端资源映射进地址空间不会自动获得本地内存的 failure/coherence semantics。跨管理域仍需 capability、撤销/generation、partial completion、unknown result、endpoint reset 与一致性范围定义。
 - `Scale-up/scale-out fusion`：通过 I/O memory/DPU/communication appliance 放置可靠性边界是架构选项。NetDAM 只能标为作者方案/研究设计；需要同时说明 staging、ownership、ordering、backpressure 和新增故障域。
 - `未经采用的量化数字`：不使用“5% 丢包仍 90% goodput”“Scale-Up IP 300–400 mm²”“TPU 单算子最多 512 卡”等未完成一手核验或强依赖配置的数字。
 
