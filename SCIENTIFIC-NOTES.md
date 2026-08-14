@@ -1,6 +1,6 @@
 # 科学性审校说明
 
-本稿于 2026-08-13 完成零基础叙事重写后的公开资料复核。审校目标不是证明所有未来产品细节，而是让每个结论落在正确的证据层级，并显式保留公开资料的边界。
+本稿于 2026-08-14 完成零基础叙事重写及新版前序讲座对齐后的公开资料复核。审校目标不是证明所有未来产品细节，而是让每个结论落在正确的证据层级，并显式保留公开资料的边界。
 
 ## 已修正的关键问题
 
@@ -19,15 +19,15 @@
 13. UCCL-Tran（OSDI 2026；公开预印本 arXiv:2504.17307v2）描述的是基于现有 RDMA primitives 的 host-CPU software transport：优先 UC，兼容路径包括受限条件下的 RC 和 UD；只有 UC/UD 路径把 packet reliability 放到软件，RC 仍保留 NIC hardware reliability。它不是新 NIC，也不是自动把 RoCE/InfiniBand wire protocol 变成 UET。
 14. UCCL 的论文结果与实现细节受 testbed、NIC vendor、QP 数量、chunk size、CPU 预算和 collective shape 约束；4.5×、1.9× 及 EQDS tail-latency 数字不能外推为所有 GPU 集群的通用收益。
 15. 当前 UCCL 开源仓库的范围已经扩展到 UCCL-Tran、UCCL-P2P 和 UCCL-EP。讲稿分别引用论文与固定仓库 commit，不把后来项目能力倒推成原论文结论。
-16. 已与前序演讲《Towards Modern Networking System》更新版 PPTX 的 64 页内容逐页对照，并核对 OOXML 文本、图示和 notes part。新版已包含 management/domain、network microarchitecture、RC QP critique、bounded transaction、Tile Load/Store、SQ/CQ、synchronization 与 unified-system 章节；本场定位改为用 AI workload 和现有实现验证这些架构主张，而不是只承接旧 PDF 的 Part I。
-17. 前序的 `Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 被保留为其架构对象，不与 RDMA QP/RC、UET PDC/CCC、UCCL connection/chunk 或 compute tile 混用。
-18. 前序对传统 RC QP 的批评被限定为常见耦合模式：不同 RNIC/transport 已提供 SRQ、DC、adaptive routing、selective recovery 等扩展，不把单路径、Go-Back-N、PFC 依赖和 QP fatal error 说成所有 RC 的永久定义。
+16. 已与前序演讲《Towards Modern Networking System》更新版 56 页 PDF 逐页对照并完成文字与视觉核验。其实际正文展开了 link/router、Orderlock、Domain、同步/SQ-CQ 与 Ethernet/TCP；目录预告的 Connection/Tunnel/Path、Bounded Transaction、Fence 和 Tile-based Computing 并未在交付 PDF 中展开。本场只压缩 recall 已讲基础，其余从零讲授。
+17. 前序第 3–4 页的 `Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 被保留为讲者提出的候选对象，不与 RDMA QP/RC、UET PDC/CCC、Falcon connection、UCCL connection/chunk 或 compute tile 混用。`Reliable Tunnel` 是共享 packet-reliability resource，不是 encapsulation tunnel；`Bounded Transaction` 也不是数据库原子事务。
+18. 已删除“前序第 50 页系统批评 RC QP”的错误归因：该页实际展示 SQ/CQ 生命周期。主讲对传统 QP 耦合的分析由 IRN、Falcon、UET、UCCL 等一手资料独立支持，并继续限定为常见设计模式；不同 RNIC/transport 已提供 SRQ、DC、adaptive routing、selective recovery 等扩展。
 19. Tile/address-style programming 被解释为把 queue bookkeeping 移入 compiler/runtime/device engine；底层有限 queue、credit、translation/protection、retry、completion 和 backpressure 仍然存在。`32–128 KiB` 是设计建议，不是跨 workload/协议的固定最优范围。
 20. 远端资源映射进入地址空间不等于自动获得本地 memory semantics；跨管理域仍需 capability、撤销/generation、partial completion、unknown result、endpoint reset、memory scope 与一致性边界。
 21. Orderlock 使用原论文限定：在论文模型中，in-order delivery、lossless transmission 与 out-of-order capability 同时成立，是该类死锁的必要充分条件。
-22. 前序 p.43 的“同一台计算机共享同一份内存真相”不外推到所有离散 GPU/NIC 系统；addressability、coherence、consistency scope、IOMMU/PASID 和 ownership 必须分别确认。前序 p.50 的 UEC state placement 也只作为实现假设，不作为 UET wire specification 的规定。
+22. 前序 p.43–44 的 Domain/NVL72 是案例，不外推为 management domain、coherence/consistency domain、scale-up domain 与 failure domain 天然等价；离散 GPU/NIC 系统的 addressability、coherence、consistency scope、IOMMU/PASID 和 ownership 必须分别确认。
 23. “不承诺伪 exactly-once”被限定为 transport 在不确定故障后不能单独判断远端应用动作；不否认带 durable deduplication、transaction/consensus 的上层系统在明确模型下提供 exactly-once effect。
-24. 前序 p.44–48 仍含未完成的 audio/gaming/Ethernet 草稿页。本场不使用“音频设备不用中断”或 timer polling 的类比作为网络科学结论。
+24. 前序 p.45–50 的 synchronization、prior/posterior、audio timer 与 SQ/CQ 用作教学类比，不当成 I/O 机制的完备分类。真实依赖不能被违反，但其等待时间可与独立工作重叠；p.50 的 host doorbell 在常见 RNIC 路径中通常是对 device doorbell register 的 MMIO write（有时配合 host-memory doorbell record），不是 CPU-style interrupt。
 25. 新增的端到端延迟分解式是诊断框架，不是假设各项严格独立或可直接线性测量；queueing、serialization、placement、completion 与 overlap 在真实流水中可能相互重叠。
 26. `effective throughput ≤ min(...)` 是资源服务率的必要上界，用于提醒 source/destination memory、PCIe、NIC、fabric 和 consumer 都可能限速；它不替代 collective algorithm、duplex、协议开销和并发流的精确模型。
 27. “一个 API 下有十三层”是教学分层，不是标准网络分层模型。层数用于显式追踪隐藏工作，不声称每个实现都存在十三个独立模块。
@@ -37,6 +37,10 @@
 31. 新增的 `32 KiB ÷ 50 GB/s ≈ 0.66 μs` 只用于说明 raw serialization 的数量级。`50 GB/s` 是把 400 Gb/s 做单位换算后的理想上限，未扣除 framing、FEC、协议 header、idle gap 与 payload efficiency；真实端到端延迟必须继续加入 DMA、queue、placement、completion 等事件。
 32. `initiator / progress engine / data mover / completion owner / recovery owner` 是责任归因框架，不声称每个实现都有五个独立硬件模块；同一 CPU、GPU kernel、RNIC 或 endpoint 可以同时承担多个角色。
 33. “正文事件链 + 讲师演算 + 症状/证据”是教学组织方式，不把启发式诊断词汇当成标准接口或性能模型。具体 API 的完成、ordering、memory scope 与错误语义仍以对应规范和实现为准。
+34. 前序的 `Local Retirement` 只表示 sender 收齐 fragment ACK 并解除 source-data obligation，不推出 remote placement、consumer visibility 或 target execution；sender CQE、transport ACK、remote placement 和 consumer-visible completion 继续分层。
+35. 前序的 `Terminal Result` 分为 success、definite rejection 和 unknown transport failure；timeout 只是本地观察到等待超限，不自动证明远端未执行，也不应伪造确定失败结果。
+36. `Send Fence` 只控制后继 transaction 何时进入网络，`Execute Fence` 只控制目标执行资格；两者都不自动提供 arrival order、completion order、multi-packet atomic commit 或 exactly-once effect。
+37. 前序 p.52 的 packet “atomic”只按 framing/forwarding unit 理解，不提升为应用事务原子性；p.53–54 的 Ethernet/L2 规则是入门启发式，不覆盖 VLAN、overlay、LAG/ECMP、控制平面和具体 switch pipeline。
 
 ## 演讲时仍需限定
 
@@ -46,8 +50,8 @@
 - BDP 公式用于估算 in-flight state 的数量级，不能直接反推芯片面积。
 - 通过 I/O memory/DPU/communication appliance 放置可靠性边界是一种架构选择，不是已经统一的行业标准。
 - UCCL 的软件控制面主要依赖 RTT/丢包等仍可见的信号；RNIC 已消费的 ECN、trim 或 vendor-specific telemetry 不会自动出现在用户态。CPU engine、host NUMA、polling、QP context 和 UD 重组开销必须纳入线速与尾延迟评估。
-- 前序 p.51–53 的逐 region reliability、百万连接、128 KiB transaction/1 KiB packet 和 tracker 配置，以及 p.52 的“默认无需拥塞调参”均作为目标设计或数量级示例，不当作 UEC、SUE、UALink、Falcon、UCCL 或当前白牌 Ethernet 的共同保证。
-- 前序 p.57 的 SQ/CQ 趋势判断、p.58 的同步延迟表和 p.62 的 memory-wall 修辞不作为独立科学证据；主讲中的事实仍回溯至标准、论文、官方文档和固定代码版本。
+- 前序 p.3–4 的 connection/tunnel/path、transaction/fragment/incarnation、DMA context、aperture、retirement、fence 与 aggregation engine 是候选架构语言，不当作 UEC、SUE、UALink、Falcon、UCCL 或当前 RNIC 的共同对象模型。
+- 前序 p.47 的同步、p.48 的 prior/posterior、p.50 的 SQ/CQ 以及 p.51–56 的 Ethernet/TCP 内容只用于建立直觉；主讲中的完成语义、wire behavior 和量化结论仍回溯至标准、论文、官方文档和固定代码版本。
 ## 自动检查结果
 
 - 主讲页：72 页，编号连续且无重复。

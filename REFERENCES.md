@@ -1,6 +1,6 @@
 # 参考资料
 
-资料核对日期：2026-08-12。引用编号与 [TALK.md](TALK.md) 保持一致。
+资料核对日期：2026-08-14。引用编号与 [TALK.md](TALK.md) 保持一致。
 
 证据等级：
 
@@ -8,7 +8,7 @@
 - `[B]`：官方开源仓库、项目文档或固定版本的实现证据。
 - `[C]`：厂商公开预告或披露仍不完整的快速演进能力。
 
-前序演讲 `Towards Modern Networking System.pptx` 作为议程衔接和术语对齐材料单独记录在 [PREDECESSOR-ALIGNMENT.md](PREDECESSOR-ALIGNMENT.md)。它包含讲者原创的架构提案与趋势判断，因此不编入 `[A]/[B]/[C]` 科学证据编号；本稿的产品事实、协议字段和定量结论仍由下列一手资料支持。
+前序演讲 `Towards Modern Networking System(1).pdf` 作为议程衔接和术语对齐材料单独记录在 [PREDECESSOR-ALIGNMENT.md](PREDECESSOR-ALIGNMENT.md)。它包含讲者原创的候选架构词汇与教学类比，因此不编入 `[A]/[B]/[C]` 科学证据编号；本稿的产品事实、协议字段和定量结论仍由下列一手资料支持。
 
 ## 官方架构、产品与软件文档
 
@@ -85,7 +85,7 @@
 
 ## Acknowledged Secondary Reading
 
-特别感谢微信公众号 **zartbot**。以下文章帮助确定了问题脉络和扩展阅读范围；公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-12：
+特别感谢微信公众号 **zartbot**。以下文章帮助确定了问题脉络和扩展阅读范围；公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-14：
 
 - 《英伟达 GB200 架构解析 4：BlackWell 多 die 和 Cache 一致性相关的分析》
 - 《谈谈 RDMA 和 ScaleUP 的可靠传输》

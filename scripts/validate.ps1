@@ -105,6 +105,20 @@ if ($placeholders.Count -gt 0) {
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $markdownFiles = Get-ChildItem -LiteralPath $repoRoot -Filter "*.md" -File
+$allMarkdownText = ($markdownFiles | ForEach-Object {
+    Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
+}) -join "`n"
+
+$stalePredecessorPatterns = @(
+    '64[^\r\n]{0,20}PPTX',
+    '2E3BE00DCDC00F8A80A792E34C83877560E6673AA605B55F52563E28AD97211C'
+)
+foreach ($stalePattern in $stalePredecessorPatterns) {
+    if ([regex]::IsMatch($allMarkdownText, $stalePattern, 'IgnoreCase')) {
+        throw "Found stale predecessor-deck wording: $stalePattern"
+    }
+}
+
 foreach ($markdownFile in $markdownFiles) {
     $markdown = Get-Content -LiteralPath $markdownFile.FullName -Raw -Encoding UTF8
     $localLinks = [regex]::Matches($markdown, '\[[^\]]+\]\((?!https?://|mailto:|#)([^)]+)\)')

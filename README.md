@@ -38,7 +38,7 @@
 
 产品事实、学术方案和基于公开材料的推断在讲稿中分开表达。开源实现尽量固定到 commit，避免项目后续演进改变原始语义。
 
-本稿还与前序演讲《Towards Modern Networking System》更新版 64 页 PPTX 完成逐页对齐。前序负责从 link/network 推导 connection/path 解耦与 tile-based networking 的目标架构；本稿负责用 AI workload、公开协议和实现检验这些抽象，并明确区分设计主张与已标准化产品事实。源 PPTX 未收入本公开仓库；版本哈希和详细边界见 [前序演讲对齐说明](PREDECESSOR-ALIGNMENT.md)。
+本稿还与前序演讲《Towards Modern Networking System》更新版 56 页 PDF 完成逐页对齐。该版本实际展开了 VALID/READY、credit/replay、router/VC、Orderlock、Domain、SQ/CQ 与 Ethernet/TCP 基础；Connection/Tunnel/Path、Bounded Transaction、Fence 和 Tile-based Computing 只出现在术语表或目录预告中。因此本稿会压缩 recall 已讲过的链路/路由基础，但从零讲授后续语义、transport state placement 和 distributed-kernel 接口。源 PDF 未收入本公开仓库；版本哈希和详细边界见 [前序演讲对齐说明](PREDECESSOR-ALIGNMENT.md)。
 
 ## 校验
 

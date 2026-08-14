@@ -1,6 +1,6 @@
 ﻿# AI Communication Stack: From One Tensor to the Whole System
 
-> 零基础公开审校稿 v0.9，资料核对日期：2026-08-13。
+> 零基础公开审校稿 v0.9，资料核对日期：2026-08-14。
 >
 > 独立讲授建议时长：142–148 分钟；紧接《Towards Modern Networking System》联讲时建议约 132–138 分钟。主讲 72 页，另附备份页、demo 与制图建议。屏幕正文控制信息密度，完整因果链、观测方法和易错边界写在讲师说明中。
 >
@@ -51,15 +51,15 @@ consumer synchronization and recovery
 
 ## 与前序演讲的衔接
 
-前序演讲《Towards Modern Networking System》已经完成了三步推导：先从 circuit、VALID/READY、credit 与 link replay 建立 link/network 基础；再提出把 software connection、reliable tunnel 与 physical path 解耦；最后把 bounded transaction、tile load/store、显式 fence 和地址空间扩展作为现代网络的候选抽象。本场把这些机制与架构主张当作起点，重点用 AI workload、现有协议、公开产品和开源实现检验：哪些已经落地，哪些仍是设计空间，以及状态与成本最终落在哪里。
+前序演讲《Towards Modern Networking System》已经从 circuit、VALID/READY、credit、link replay、router queue/VC 和 Orderlock 建立了 link/network 基础，也用 Domain、同步、SQ/CQ 与 Ethernet/TCP 给出了设备和网络的入门坐标系。它在第 3–4 页术语表及目录中还命名了 software connection、reliable tunnel、physical path、bounded transaction、aperture、fence 与 tile-based computing；但更新后的 56 页 PDF 并没有展开这些后续章节。因此，本场把已讲过的物理机制做简短 recall，而对只出现于术语表或目录的候选对象从零讲清，再用 AI workload、现有协议、公开产品和开源实现检验其边界。
 
 建议用约 90–120 秒完成这个承接：
 
-- 前序第 19–41 页已经讲过 credit/replay、lossless/lossy、HOL/VC、因果依赖、Orderlock 与 InfiniBand；本场在 Slide 22–33 把这些机制放进同一个 GPU A→GPU B 故障场景，不重复推导路由器基础。
-- 前序第 43–53 页提出 management/domain、connection/tunnel/path 解耦，并批评传统 RC QP 将身份、顺序、可靠性、路径和异步队列耦合在一起；本场用 UET、Falcon、MRC、UCCL 和现有 RNIC 分别说明 wire protocol、hardware transport、software transport 与 verbs compatibility 各能解开哪一层。
-- 前序第 55–61 页提出 bounded tile transaction、Tile Load/Store、显式 Fence 和地址空间化设备；本场用 TMA、NVSHMEM、NCCL Device API、TileLink、distributed GEMM 与 MegaMoE 说明上层接口隐藏了什么，同时继续核算 queue、buffer、completion、authorization 与 failure state。
+- 前序第 15–41 页已经展开 credit/replay、lossless/lossy、HOL/VC、因果依赖、Orderlock 与 InfiniBand；本场在 Slide 22–25 压缩回忆，在 Slide 26–33 继续讲它没有展开的 multipath、direct placement、SACK/retry、拥塞控制与状态放置。
+- 前序第 43–50 页用 Domain、NVL72、同步类比和 SQ/CQ 生命周期说明“设备背后存在状态与异步 progress”；本场把它翻译成一个 GPU A→GPU B 的逐事件路径，并明确 MMIO doorbell、DMA、transport ACK、CQE、remote visibility 和 consumer synchronization 不是同一事件。
+- 前序第 51–56 页已经给出 Ethernet/IP/ARP/TCP 的基础层次，本场不再泛讲协议栈，而是完整讲授术语表和目录只预告的 connection/tunnel/path、bounded transaction、fence、tile，以及 UET、Falcon、MRC、UCCL、TMA、NVSHMEM、TileLink、distributed GEMM 与 MegaMoE 的实际边界。
 
-这里有一个重要口径：前序后半部分同时包含架构原则、候选抽象和趋势判断，不应全部讲成已经标准化的产品事实。其 `Software Connection`、`Reliable Tunnel`、`Physical Path`、`DMA Context` 与 `Bounded Transaction` 是一套提案词汇；它们不要直接等同为 RDMA QP、RC、UET PDC、UCCL connection/chunk 或 GEMM tile。前序所说“Tile Load/Store 取代显式队列编程”，在本场解释为应用接口与调度抽象上移，不解释为物理队列、backpressure、replay 和 completion state 消失。
+这里有一个重要口径：`Software Connection`、`Reliable Tunnel`、`Physical Path`、`DMA Context`、`Bounded Transaction`、`Local Retirement`、`Send/Execute Fence` 等是前序讲者提出的架构词汇，不是行业通用标准对象。它们不要直接等同为 RDMA QP/RC、UET PDC/CCC、Falcon connection、UCCL connection/chunk 或 GEMM tile。目录中的 “Tile Load/Store” 是待展开的编程目标；本场会把它解释为应用接口与调度抽象上移，而不是物理 queue、backpressure、replay、protection 和 completion state 消失。
 
 ```text
 0. One tensor, thirteen hidden layers
@@ -374,7 +374,7 @@ compute die 0 ── 10 TB/s chip-to-chip interconnect ── compute die 1
 屏幕正文：
 
 ```text
-1 consume doorbell / WQE
+1 consume MMIO doorbell / fetch WQE
 2 check MR, key, address and permissions
 3 DMA-read source GPU/host memory
 4 segment payload and build transport packets
@@ -384,7 +384,7 @@ compute die 0 ── 10 TB/s chip-to-chip interconnect ── compute die 1
 8 write CQE / immediate / completion signal
 ```
 
-讲师说明：应用 post 一个 RDMA WRITE 后，RNIC 并不是立刻“把 tensor 放上网”。WQE 可能先在 doorbell/queue 等待；memory key 或地址转换 miss 会阻塞取数；GPU→NIC DMA 可能受 PCIe 限制；packet engine 再消耗 QP/connection、PSN、path 和 CC state；发送后还要保留 outstanding/replay 信息，直到 ACK 或完成条件释放。CQE 的到达也不自动等于远端 GPU consumer 已做 acquire/fence。
+讲师说明：应用 post 一个 RDMA WRITE 后，RNIC 并不是立刻“把 tensor 放上网”。在常见 verbs 路径中，通知设备通常是对 doorbell register 的 MMIO write，有些实现还配合 host-memory doorbell record；这不是 CPU-style interrupt。设备报告完成时可以触发 interrupt，也可以由软件 polling CQ。WQE 可能先在 queue 等待；memory key 或地址转换 miss 会阻塞取数；GPU→NIC DMA 可能受 PCIe 限制；packet engine 再消耗 QP/connection、PSN、path 和 CC state；发送后还要保留 outstanding/replay 信息，直到 ACK 或完成条件释放。CQE 的到达也不自动等于远端 GPU consumer 已做 acquire/fence。
 
 因此同样的端口线速下，小消息可能受 doorbell/WQE/CQE rate 限制，大消息受 DMA 或 wire rate 限制，多连接受 QP-context/cache 限制，丢包时受 replay/recovery 限制。应测 post→first DMA、DMA rate、packet rate、queue occupancy、retry、CQE latency 和 remote-visible gap。ConnectX 是 NIC/RNIC，BlueField 是带可编程基础设施处理器的 DPU，Spectrum-X 是交换机、NIC/DPU 与软件组成的系统；DOCA、NCCL、SHARP 也处在不同层，不能用产品名代替这八步。[A5][A6]
 
@@ -510,6 +510,10 @@ Ordering:   哪些事务必须先可见，何时允许 fence/commit？
 
 观测时分别找证据：sequence gap/NACK 证明 delivery 问题，reorder bitmap/offset 证明 placement，CQE/counter/flag 证明 completion，fence/barrier wait 证明 ordering。只看“没有 packet drop”无法证明应用语义正确。
 
+前序术语表可以帮助把同一例子再拆细，但这些词需要在这里第一次完整解释：`Move` 是较大的完整搬运任务，本身未必只有一个完成点；`Bounded Transaction` 是其中有稳定 identity、有限 size、一次 retirement 的工作单元；`Transaction Fragment` 是可独立 place 的逻辑片段；某个 fragment 每重发一次都会形成新的 `Incarnation`。sender 收齐 fragment ACK 得到的 `Local Retirement`，只表示可以解除 source-buffer obligation，不表示 B 的 kernel 已经可见或执行。最终还要区分 `Terminal Result`：success、definite rejection 或 unknown transport failure；timeout 只是等待超限，不能自动推出远端未执行。
+
+同理，两类 fence 不应被说成万能顺序屏障：`Send Fence` 只限制后继 transaction 何时进入网络，`Execute Fence` 只限制目标端后继操作何时具备执行资格；它们都不会自动把多个 packet 变成 atomic commit，也不单独保证 arrival、completion 或 exactly-once effect。后文遇到 RDMA completion、UET ordering、device counter 和 distributed-kernel signal 时，都回到这组边界。
+
 ## Slide 24｜每一层可靠性只覆盖自己的故障半径
 
 | 层次 | 主要覆盖 | 不能单独解决 |
@@ -610,7 +614,7 @@ UEC 的 RUD 路径要求处理 SACK bitmap，ROD 除 probe 外可选；Falcon �
 ---
 ## 2.4 Congestion Control, Retry and State Placement
 
-前序第 50 页对传统 RC QP 的批评可以作为这一节的设计问题，但需要限定范围：IB/RoCE QP 的确常把寻址、PSN/ordering、reliability、path selection 与 SQ/RQ/CQ progress 绑定在一个硬件对象及其关联状态上；不同代际 RNIC 已提供多 QP、shared receive queue、DC transport、adaptive routing、selective repeat 或厂商扩展，不能把“单路径、Go-Back-N、PFC、出错即杀 QP”写成所有 RC 实现永久不变的定义。真正的问题是这些轴能否独立演进，以及状态应由 NIC SRAM、host memory、DPA 还是软件 runtime 承担。[A29][A31][A32][A40]
+前序第 50 页实际展示的是 SQ/CQ 生命周期；第 3–4 页术语表则提出 connection、tunnel、path 与 DMA context 的候选拆分，但没有在正文中完成 RC QP 的系统性分析。本节因此从事实重新建立问题：IB/RoCE QP 常把寻址、PSN/ordering、reliability、path selection 与 SQ/RQ/CQ progress 关联在一个硬件对象及其状态中；不同代际 RNIC 又提供 multi-QP、shared receive queue、DC transport、adaptive routing、selective recovery 或厂商扩展。不能把“单路径、Go-Back-N、PFC、出错即杀 QP”写成所有 RC 实现的永久定义。真正的问题是这些轴能否独立演进，以及状态应由 NIC SRAM、host memory、DPA 还是 software runtime 承担。[A29][A31][A32][A40]
 
 ## Slide 30｜拥塞控制：rate/window/credit/telemetry 是设计轴
 
@@ -643,7 +647,7 @@ UCCL 把控制从 packet 放宽到 chunk/RTT 粒度：默认约 32 KiB control c
 
 UCCL 与 Falcon/UEC 的关系也要分开：UCCL 是基于现有 RNIC verbs 的软件 endpoint/transport 实现，目标是快速试验并部署新的 control policy；Falcon 更接近硬件或 SmartNIC 中的可编程 transport；UEC 是 wire-level 规范。UCCL 的 multipath 不自动让底层 wire protocol 变成 UET，也不保证跨厂商 NIC 拥有相同的硬件能力。[A31][A32][A40][B16]
 
-这也给出了对前序 `Software Connection / Reliable Tunnel / Physical Path` 分层的现实映射：UET 的 PDC/CCC、Falcon 的连接与 subflow、UCCL 的 logical connection 与共享 QP pool 都在尝试把应用关系、可靠传输状态和实际路径拆开，但对象、wire identity、failure semantics 与 state placement 并不相同。它们是同一个设计方向的不同实例，不是互相可替换的术语。
+前序词汇表可以在这里充当一组对照问题：应用关系、packet reliability resource 和 physical route 是否能独立变化？UET 的 PDC/CCC、Falcon 的 connection/subflow、UCCL 的 logical connection 与共享 QP pool 分别给出不同答案；其 object、wire identity、failure semantics 与 state placement 也都不同。这个对照只说明拆分维度有解释力，不表示这些协议或实现采用了前序的同一对象模型。
 
 读这张表时要做一个固定练习：若 x[i] 在中间丢失或迟到，谁检测、谁保留重放数据、谁限制新流量、谁最终通知 B？答案分别落在 link endpoint、XPU transport、host CPU、RNIC 或 UET endpoint。上层 collective 可能完全透明，但可观察证据不同：LLR replay/credit、transport retry、CPU engine utilization、QP/connection state、completion timeout。只有把状态位置写出，才有资格比较面积、延迟和可编程性。
 
@@ -1082,7 +1086,7 @@ Lifetime:    buffer / cache line 何时可以复用或驱逐？
 
 讲师说明：单卡 kernel 常把三者压在同一个线程控制流里；TMA、TMEM 和远端通信把它们拆开。`mbarrier` 回答本地异步操作何时完成；remote counter/flag 回答对端数据何时可见；cache eviction priority 管的是数据生命周期提示。通信进入 kernel 后，优化对象不再只是 payload bandwidth，而是 payload、completion 与 lifetime 三条路径能否一起流水。
 
-前序所倡议的 `Tile Load / Tile Store + 少量同步原语` 正好可以作为这一页的编程目标：让 compiler/runtime 生成地址、分块、排队和完成 bookkeeping，而不是让 kernel 作者逐条管理 SQE/CQE。但抽象隐藏的是软件接口，不是物理资源。底层仍必须有有限 queue/credit、outstanding tracker、protection/translation、retry 或 error state；一旦跨管理域，还要回答 capability、撤销、generation、partial completion 与 endpoint failure。因而“地址语义”与“队列实现”不是非此即彼，常见实现会用地址式 API 驱动队列式硬件。
+前序目录预告的 `Tile Load / Tile Store + 少量同步原语` 可以作为这一页的编程目标，但更新后的 PDF 没有展开其语义，所以本场必须从三个问题重新定义：payload 放到哪里、谁确认 completion、buffer lifetime 何时结束。理想接口可让 compiler/runtime 生成地址、分块、排队和完成 bookkeeping，而不是让 kernel 作者逐条管理 SQE/CQE；它隐藏的是软件接口，不是物理资源。底层仍有有限 queue/credit、outstanding tracker、protection/translation、retry 或 error state；跨管理域还要回答 capability、撤销、generation、partial completion 与 endpoint failure。因此“地址语义”与“队列实现”不是非此即彼，常见实现会用地址式 API 驱动队列式硬件。
 
 ## Slide 57｜Runtime TMA override：复用 layout，只替换本次 expert 的地址
 
@@ -1446,7 +1450,7 @@ ibstat
 
 ## Backup Slide T2｜细粒度 transaction：wire efficiency 与 packing latency 的交换
 
-前序演讲使用的 `Bounded Transaction` 是具有稳定身份、有限大小和一次退休语义的候选协议工作单元；本场的 RDMA message、UCCL chunk、通信 tile 和 GEMM tile 可能承担相似的工程作用，但不是同一个标准对象。前序给出的 `32–128 KiB` 是设计建议，不是跨 workload 的科学常数：UCCL 默认 32 KiB 来自其 CPU/control-coalescing 取舍，GEMM tile 由 dtype、layout、SMEM/TMEM 与并行策略决定，EP token payload 和 KV block 又是另一套粒度。讲稿不能把这个范围说成某个 RNIC、UET、SUE、UALink 或 XPU 已规定的事务大小。
+前序术语表把 `Bounded Transaction` 定义为具有稳定身份、有限大小和一次 retirement 的工作单元，并明确它不是数据库原子事务；`Transaction Fragment` 是自描述、幂等、可独立放置的逻辑片段，`Incarnation` 才是某个 fragment 的一次实际传输。`Local Retirement` 只表示 sender 收齐 fragment ACK、可解除 source obligation，不表示 remote consumer 已可见或已执行。目录把 `32–128 KiB` 列为拟讨论粒度，但本版 PDF 没有展开论证；本场的 RDMA message、UCCL chunk、通信 tile 和 GEMM tile 可能承担相似工程作用，却不是同一标准对象。UCCL 默认 32 KiB 来自 CPU/control-coalescing 取舍，GEMM tile 由 dtype、layout、SMEM/TMEM 与并行策略决定，EP token payload 和 KV block 又是另一套粒度。
 
 ```text
 wire efficiency = useful payload bytes / total wire bytes
@@ -1611,9 +1615,9 @@ dense QKᵀ scores in TMEM
 - `Falcon`：官方可讲 lossy Ethernet、multipath、细粒度 RTT、hardware-enforced traffic shaping、fast retransmission、flexible ordering 与多 ULP。论文中的吞吐、Mops、tail 或丢包结果必须连同实验配置引用，不能提升为产品通用保证。
 - `ConnectX-8 PSA/DPA`：官方公开材料可确认 advanced routing、telemetry-based congestion control，以及 DOCA DPA programmable congestion-control events；当前证据不足以画 PSA 内部流水线、八平面实现或断言某段算法一定运行在哪个处理器上。
 - `UCCL`：论文 v2 描述的是在现有 RDMA NIC 上解耦 data/control path、由 host CPU 运行可扩展 transport control 的研究与实现。UC 是优先路径；RC/UD 是受 NIC 能力约束的兼容路径。论文性能数字只代表其 testbed，不外推为所有 NIC/拓扑的通用收益。当前开源仓库已扩展到 UCCL-Tran/P2P/EP，需与原论文范围分开。
-- `前序演讲的未来架构`：`Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 是前序讲者定义的体系结构对象，不是当前标准协议的通用术语。讲稿只把它们作为分析框架，不宣称 UET、Falcon、UCCL、SUE 或 UALink 已采用同一对象模型。
+- `前序演讲的候选词汇`：`Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 只在新版 PDF 的术语表中被定义，正文未展开；它们不是当前标准协议的通用术语。讲稿只把它们作为分析问题，不宣称 UET、Falcon、UCCL、SUE 或 UALink 已采用同一对象模型。
 - `传统 RC QP`：QP 常把寻址、顺序、可靠性、路径和 queue progress 关联起来，但不同 RNIC 与传输类型已有 SRQ/DC/adaptive routing/selective recovery 等扩展；不使用“所有 RC 永远单路径、Go-Back-N、依赖 PFC、出错必杀 QP”的绝对表述。
-- `Tile Load/Store 与 SQ/CQ`：地址式/tile 式 API 可以把 SQE/CQE bookkeeping 移入 compiler/runtime 或 device engine，但不能消灭有限 queue、credit、translation/protection、retry、completion 和 backpressure。`32–128 KiB` 只作为前序架构的建议范围，不当作跨 workload 或协议的固定最优值。
+- `Tile Load/Store 与 SQ/CQ`：Tile Load/Store 在新版前序 PDF 中是目录预告，不是已讲授或已标准化接口。地址式/tile 式 API 可以把 SQE/CQE bookkeeping 移入 compiler/runtime 或 device engine，但不能消灭有限 queue、credit、translation/protection、retry、completion 和 backpressure。`32–128 KiB` 只作为目录中的拟讨论范围，不当作跨 workload 或协议的固定最优值。
 - `跨机器 memory hierarchy`：把远端资源映射进地址空间不会自动获得本地内存的 failure/coherence semantics。跨管理域仍需 capability、撤销/generation、partial completion、unknown result、endpoint reset 与一致性范围定义。
 - `Scale-up/scale-out fusion`：通过 I/O memory/DPU/communication appliance 放置可靠性边界是架构选项。NetDAM 只能标为作者方案/研究设计；需要同时说明 staging、ownership、ordering、backpressure 和新增故障域。
 - `未经采用的量化数字`：不使用“5% 丢包仍 90% goodput”“Scale-Up IP 300–400 mm²”“TPU 单算子最多 512 卡”等未完成一手核验或强依赖配置的数字。
