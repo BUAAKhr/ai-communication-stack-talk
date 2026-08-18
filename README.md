@@ -16,6 +16,7 @@
 - Blackwell 双 Die 的官方事实，以及不能从 MCM-GPU 论文反推的产品细节。
 - Scale-Up 与 Scale-Out 的语义、RTT、故障域和可靠性状态。
 - RDMA、DDP、multipath、out-of-order placement、SACK、拥塞控制和 BDP。
+- MRC：RC-compatible AI transport 的多路径、选择性恢复、ECN/路径健康、生产故障与受控丢包案例，并明确其 WRITE/WRITE_IMM 语义子集和 endpoint 故障边界。
 - UCCL：基于现有 RDMA verbs 的 host-CPU software transport，以及它与 Falcon、UEC 的层次差异。
 - MPI/NCCL 的 progress 与 collective schedule，以及 CPU initiated、GPU initiated、NIC/DPU offload 的责任边界。
 - P2P object lifecycle、NCCL EP、DeepEP、MoE dispatch/combine、expert skew 与 incast。
@@ -38,7 +39,7 @@
 
 产品事实、学术方案和基于公开材料的推断在讲稿中分开表达。开源实现尽量固定到 commit，避免项目后续演进改变原始语义。
 
-本稿还与前序演讲《Towards Modern Networking System》更新版 56 页 PDF 完成逐页对齐。该版本实际展开了 VALID/READY、credit/replay、router/VC、Orderlock、Domain、SQ/CQ 与 Ethernet/TCP 基础；Connection/Tunnel/Path、Bounded Transaction、Fence 和 Tile-based Computing 只出现在术语表或目录预告中。因此本稿会压缩 recall 已讲过的链路/路由基础，但从零讲授后续语义、transport state placement 和 distributed-kernel 接口。源 PDF 未收入本公开仓库；版本哈希和详细边界见 [前序演讲对齐说明](PREDECESSOR-ALIGNMENT.md)。
+本稿与用户提供的前序演讲《Towards Modern Networking System》79 页 PDF 对齐：新版已展开 VALID/READY、credit/replay、router/VC、Orderlock、Domain、SQ/CQ、Ethernet/TCP，以及后半段的网络分层、multi-plane、Tile-based Computing、Descriptor、Barrier、Commit、Wait 和 Unified System。因而本场不再声称这些内容“尚未讲授”，而是把前序抽象放回 GPU tensor、RDMA、MRC、MoE、KV 和 distributed-kernel 的具体数据路径中，检查它们在公开标准与实现中的边界。源 PDF 未收入本公开仓库；页数、SHA-256 和详细章节映射见 [前序演讲对齐说明](PREDECESSOR-ALIGNMENT.md)。
 
 ## 校验
 
@@ -56,6 +57,7 @@
 
 - 《英伟达 GB200 架构解析 4：BlackWell 多 die 和 Cache 一致性相关的分析》
 - 《谈谈 RDMA 和 ScaleUP 的可靠传输》
+- 《“漫”谈 RDMA 现代化》及《谈谈 OpenAI 发布的 MRC》（作为科普/评论性二手阅读，不作为科学证据）
 
 具体事实和数字仍尽量回溯至官方文档、标准、论文与固定版本的开源仓库。
 

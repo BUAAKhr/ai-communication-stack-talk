@@ -1,6 +1,6 @@
-﻿# AI Communication Stack: From One Tensor to the Whole System
+# AI Communication Stack: From One Tensor to the Whole System
 
-> 零基础公开审校稿 v0.9，资料核对日期：2026-08-14。
+> 零基础公开审校稿 v0.9，资料核对日期：2026-08-18。
 >
 > 独立讲授建议时长：142–148 分钟；紧接《Towards Modern Networking System》联讲时建议约 132–138 分钟。主讲 72 页，另附备份页、demo 与制图建议。屏幕正文控制信息密度，完整因果链、观测方法和易错边界写在讲师说明中。
 >
@@ -51,15 +51,15 @@ consumer synchronization and recovery
 
 ## 与前序演讲的衔接
 
-前序演讲《Towards Modern Networking System》已经从 circuit、VALID/READY、credit、link replay、router queue/VC 和 Orderlock 建立了 link/network 基础，也用 Domain、同步、SQ/CQ 与 Ethernet/TCP 给出了设备和网络的入门坐标系。它在第 3–4 页术语表及目录中还命名了 software connection、reliable tunnel、physical path、bounded transaction、aperture、fence 与 tile-based computing；但更新后的 56 页 PDF 并没有展开这些后续章节。因此，本场把已讲过的物理机制做简短 recall，而对只出现于术语表或目录的候选对象从零讲清，再用 AI workload、现有协议、公开产品和开源实现检验其边界。
+前序演讲《Towards Modern Networking System》已经从 circuit、VALID/READY、credit、link replay、router queue/VC、Orderlock、Domain、同步、SQ/CQ 与 Ethernet/TCP 建立了基础；新版 p.64–70 还初步展开了网络分层、RC QP 耦合批评、multi-plane/SRv6 风格路径，p.71–78 展开了 Tile、Descriptor、Barrier、Commit、Wait 和 Unified System。因此，本场不再把这些内容说成“尚未讲授”，而是把前序抽象放回 GPU tensor、RDMA、MRC、MoE、KV 和 distributed-kernel 的具体数据路径，再用公开协议与实现检验其边界。
 
 建议用约 90–120 秒完成这个承接：
 
-- 前序第 15–41 页已经展开 credit/replay、lossless/lossy、HOL/VC、因果依赖、Orderlock 与 InfiniBand；本场在 Slide 22–25 压缩回忆，在 Slide 26–33 继续讲它没有展开的 multipath、direct placement、SACK/retry、拥塞控制与状态放置。
+- 前序第 15–42 页已经展开 credit/replay、lossless/lossy、HOL/VC、因果依赖、Orderlock 与 InfiniBand；本场在 Slide 22–25 压缩回忆，在 Slide 26–33 把这些机制放入 multipath、direct placement、SACK/retry、拥塞控制与状态放置的 AI case。
 - 前序第 43–50 页用 Domain、NVL72、同步类比和 SQ/CQ 生命周期说明“设备背后存在状态与异步 progress”；本场把它翻译成一个 GPU A→GPU B 的逐事件路径，并明确 MMIO doorbell、DMA、transport ACK、CQE、remote visibility 和 consumer synchronization 不是同一事件。
-- 前序第 51–56 页已经给出 Ethernet/IP/ARP/TCP 的基础层次，本场不再泛讲协议栈，而是完整讲授术语表和目录只预告的 connection/tunnel/path、bounded transaction、fence、tile，以及 UET、Falcon、MRC、UCCL、TMA、NVSHMEM、TileLink、distributed GEMM 与 MegaMoE 的实际边界。
+- 前序第 52–59 页已经给出 Ethernet/IP/ARP/TCP 的基础层次，p.64–78 又提出网络分层与 Tile/Unified System；本场不再泛讲协议栈，而是把 connection/tunnel/path、bounded transaction、fence、tile，以及 UET、Falcon、MRC、UCCL、TMA、NVSHMEM、TileLink、distributed GEMM 与 MegaMoE 放入可观测的数据路径，讲清各自实际边界。
 
-这里有一个重要口径：`Software Connection`、`Reliable Tunnel`、`Physical Path`、`DMA Context`、`Bounded Transaction`、`Local Retirement`、`Send/Execute Fence` 等是前序讲者提出的架构词汇，不是行业通用标准对象。它们不要直接等同为 RDMA QP/RC、UET PDC/CCC、Falcon connection、UCCL connection/chunk 或 GEMM tile。目录中的 “Tile Load/Store” 是待展开的编程目标；本场会把它解释为应用接口与调度抽象上移，而不是物理 queue、backpressure、replay、protection 和 completion state 消失。
+这里有一个重要口径：`Software Connection`、`Reliable Tunnel`、`Physical Path`、`DMA Context`、`Bounded Transaction`、`Local Retirement`、`Send/Execute Fence` 等仍是前序讲者的架构词汇，不是行业通用标准对象；新版虽已初步展示相关分层和 Tile 操作，也不能把它们直接等同为 RDMA QP/RC、UET PDC/CCC、Falcon connection、UCCL connection/chunk 或 GEMM tile。Tile Load/Store 在前序中是设计语言，本场会把它连接到已公开的 device/runtime 机制，并说明 queue、backpressure、replay、protection 和 completion state 仍然存在。
 
 ```text
 0. One tensor, thirteen hidden layers
@@ -585,16 +585,50 @@ one message / transaction
 
 | 方案 | 位于哪一层 | payload/control 怎么走 | 主要约束 |
 |---|---|---|---|
-| MRC | 生产级 reliable connection/transport | endpoint packet spraying + static SRv6 paths | 与其部署网络和 endpoint 实现绑定 |
+| MRC | RC-compatible AI transport extension | packet spraying；可用 ECMP entropy 或 static SRv6；SACK/ECN/故障恢复 | 论文报告的 transport 子集仅含 WRITE/WRITE_IMM；部署依赖 endpoint 与网络能力 |
 | Falcon | hardware/SmartNIC transport | hardware shaping、RTT、retransmission、multipath | 需要对应 transport hardware/firmware |
 | UCCL-Tran | collective 下方的 host software transport | RNIC DMA payload；CPU engine 做 CC/LB/order/recovery | CPU/NUMA、verbs 能力、可见信号 |
 | UET 1.0 | wire-level transport specification | 标准化 multipath、ACK/SACK、CC 与 endpoint behavior | 具体 state placement 由实现决定 |
 
-讲师说明：这页不是跑分比较，而是回答“我们站在哪一层改系统”。MRC 让可靠连接在多平面 Ethernet 上做 packet spraying，并结合静态 SRv6 path encoding 和故障处理；Falcon 把低延迟可靠 transport 放进硬件/SmartNIC；UCCL 不改 RNIC wire protocol，优先利用 UC，把 GPUDirect payload 留给 NIC，把可扩展控制放到 host CPU；UET 则定义可互操作的 wire behavior 和 transport objects。[A9][A10][A31][A32][A40]
+讲师说明：这页不是跑分比较，而是回答“我们站在哪一层改系统”。MRC 是对 RoCEv2 RC 语义的 AI workload 扩展：它在 best-effort/lossy Ethernet（论文部署禁用 PFC）上做 packet-level multipath，并以 SACK/selective retransmission、ECN、路径健康和可选的 packet trimming（在支持 trimming 的部署中用于加速 incast 恢复）处理拥塞与故障；路径可以通过 ECMP entropy 或 source-routed/static SRv6 实现，static SRv6 是论文的一种部署方案，不是 MRC 的唯一要求。OpenAI/Microsoft 的生产经验是论文报告的特定部署结果，不等同于所有 MRC 产品的普遍保证。Falcon 把低延迟可靠 transport 放进硬件/SmartNIC；UCCL 不改 RNIC wire protocol，优先利用 UC，把 GPUDirect payload 留给 NIC，把可扩展控制放到 host CPU；UET 则定义可互操作的 wire behavior 和 transport objects。[A9][A10][A31][A32][A40][A42]
 
 UCCL 的 UC 路径用 `write_with_imm` 让 payload 直接进 GPU、32-bit immediate 进入 CPU control path；UD fallback 用 scatter-gather 把 control header 和 GPU payload fate-share，并由 GPU kernel协助重组。RC fallback 即使关闭硬件 CC，packet reliability 仍由 RNIC 保留。它的 32 KiB control coalescing、256-QP 等选择是论文实现对 CPU 成本、path entropy 和 control precision 的折中，不是通用协议常数。[A40][B16]
 
-所以“支持 multipath”不能单独回答可部署性：还要问应用/NCCL 是否要改、NIC 是否要换、wire 是否兼容、CPU/DPA 是否有预算、谁能看到 ECN/RTT/trim，以及 failure state 落在哪里。
+所以“支持 multipath”不能单独回答可部署性：还要问应用/NCCL 是否要改、NIC 是否要换、wire 是否兼容、CPU/DPA 是否有预算、谁能看到 ECN/RTT/trim，以及 failure state 落在哪里。MRC 还必须诚实标出语义边界：当前公开论文中的 transport 只定义 RDMA WRITE 和 WRITE-with-IMMEDIATE；SEND/RECV、READ、ATOMIC 不能自动从“RC-compatible”推断为已支持。
+
+### MRC case study：一次故障为什么没有杀死训练
+
+把这项工作当作一个可验证的生产案例，而不是协议宣传页。OpenAI blog [A9] 适合说明为什么大规模同步训练需要 multipath 和故障韧性；OCP MRC 规范 [A42] 负责 wire semantics；论文 [A10] 才提供这里引用的部署与测量细节：
+
+```text
+GPU ranks → multi-plane Clos → ECMP/SRv6 paths
+          ↘ packet spray + direct placement ↗
+       SACK/NACK + selective retry + ECN/health feedback
+```
+
+论文报告的一个 50K-GPU 训练集群案例中，光模块抖动造成约一分钟内约 25% throughput 下降，但训练没有崩溃、QP 没有失败、节点也无需移除；论文报告多路径将受损路径的流量转移到健康路径，并通过选择性恢复快速处理丢失片段；这是该特定部署的观测，不是对所有 MRC 实现的因果或 SLA 保证。这个数字和结论必须带上“paper-reported、特定集群/配置”。[A10]
+
+把证据拆成三类，避免只讲一个漂亮的故障曲线：
+
+| 证据 | 论文中的配置 | 能支持什么 | 不能支持什么 |
+|---|---|---|---|
+| 生产故障 | 约 50K GPU、CX-8、每 NIC 4×200 Gb/s；T0 光模块连续 flap | 约一分钟内 throughput 下降约 25%，job/QP/节点没有失败 | 不能推出所有拓扑都能无感绕过 NIC 或交换机故障 |
+| 大规模交换机故障 | 约 75K GPU 预训练；T1 switch 故障期间约 580K packet drops、约四分之一 QP 受影响 | MRC 可快速避开坏路径，吞吐在初始下降后基本恢复 | 不能把一次运行观察写成故障概率或 SLA |
+| 受控丢包对比 | 64-GPU 小集群；MRC 与 PFC+DCQCN RoCE，对 0.1%/1% 注入丢包 | MRC 在短暂/低丢包下选择性恢复更有韧性 | 论文明确指出 1% 持续丢包时 MRC 也只约达到目标吞吐的三分之一，不能宣称“任意高丢包仍高 goodput” |
+
+这三类证据分别对应 resilience、recovery efficiency 和 operating envelope；它们不是同一个 benchmark，也不能拼成跨产品排名。[A10]
+
+还要把论文自己报告的失效边界讲出来：如果是 NIC transceiver 本身 flap，可能同时失去该 NIC 的全部端口，QP 仍会失败，节点也可能需要被移出；MRC 主要缓解的是路径、链路和交换机层面的故障，不是任意 endpoint 故障的透明容错。[A10]
+
+同一论文还报告了特定 Cluster B 配置的 32 KiB back-to-back WRITE、application-level GPU-to-GPU 带宽约 770 Gb/s；另一个 2 B latency 测试（论文表格使用不同的 QP 配置）给出 T0-local 约 5.09 μs、cross-T1 约 6.54 μs（论文将 post-to-sender-completion 的往返测量除以二作为近似单向延迟）。这里的教学重点不是记住 770 Gb/s，而是按 Slide 4 的时间戳拆开：payload serialization、路径/交换排队、direct placement、SACK/ACK 和 consumer-visible completion；这些数不能泛化为所有 NIC、消息大小或拓扑。[A10]
+
+case study 的验收问题：
+
+1. 故障发生时，per-path bytes/RTT/ECN/trim、SACK gap 和 retransmitted bytes 是否同时变化？
+2. 训练没有失败，是因为 MRC 在 transport 层恢复，还是上层 checkpoint/restart 掩盖了错误？要区分 QP state、job progress 和 application correctness。
+3. 若 workload 需要 SEND/RECV、READ 或 ATOMIC，是否回退到另一条 transport/path？回退会不会重新引入 ECMP collision 或 ordering tail？
+
+这组问题把前序课的“connection / path / transaction / completion”语言落到公开可测的事件上，也避免把 MRC 的有限语义子集误说成完整 RDMA 替代品。
 
 ## Slide 29｜Go-Back-N、Selective Retry 与 SACK 各自买了什么
 
@@ -614,7 +648,7 @@ UEC 的 RUD 路径要求处理 SACK bitmap，ROD 除 probe 外可选；Falcon �
 ---
 ## 2.4 Congestion Control, Retry and State Placement
 
-前序第 50 页实际展示的是 SQ/CQ 生命周期；第 3–4 页术语表则提出 connection、tunnel、path 与 DMA context 的候选拆分，但没有在正文中完成 RC QP 的系统性分析。本节因此从事实重新建立问题：IB/RoCE QP 常把寻址、PSN/ordering、reliability、path selection 与 SQ/RQ/CQ progress 关联在一个硬件对象及其状态中；不同代际 RNIC 又提供 multi-QP、shared receive queue、DC transport、adaptive routing、selective recovery 或厂商扩展。不能把“单路径、Go-Back-N、PFC、出错即杀 QP”写成所有 RC 实现的永久定义。真正的问题是这些轴能否独立演进，以及状态应由 NIC SRAM、host memory、DPA 还是 software runtime 承担。[A29][A31][A32][A40]
+前序第 50 页实际展示的是 SQ/CQ 生命周期；新版 p.64–70 已初步讨论 RC QP 耦合与 network-layer 拆分。本节把该问题放回公开实现重新核对：IB/RoCE QP 常把寻址、PSN/ordering、reliability、path selection 与 SQ/RQ/CQ progress 关联在一个硬件对象及其状态中；不同代际 RNIC 又提供 multi-QP、shared receive queue、DC transport、adaptive routing、selective recovery 或厂商扩展。不能把“单路径、Go-Back-N、PFC、出错即杀 QP”写成所有 RC 实现的永久定义。真正的问题是这些轴能否独立演进，以及状态应由 NIC SRAM、host memory、DPA 还是 software runtime 承担。[A29][A31][A32][A40]
 
 ## Slide 30｜拥塞控制：rate/window/credit/telemetry 是设计轴
 
@@ -1086,7 +1120,7 @@ Lifetime:    buffer / cache line 何时可以复用或驱逐？
 
 讲师说明：单卡 kernel 常把三者压在同一个线程控制流里；TMA、TMEM 和远端通信把它们拆开。`mbarrier` 回答本地异步操作何时完成；remote counter/flag 回答对端数据何时可见；cache eviction priority 管的是数据生命周期提示。通信进入 kernel 后，优化对象不再只是 payload bandwidth，而是 payload、completion 与 lifetime 三条路径能否一起流水。
 
-前序目录预告的 `Tile Load / Tile Store + 少量同步原语` 可以作为这一页的编程目标，但更新后的 PDF 没有展开其语义，所以本场必须从三个问题重新定义：payload 放到哪里、谁确认 completion、buffer lifetime 何时结束。理想接口可让 compiler/runtime 生成地址、分块、排队和完成 bookkeeping，而不是让 kernel 作者逐条管理 SQE/CQE；它隐藏的是软件接口，不是物理资源。底层仍有有限 queue/credit、outstanding tracker、protection/translation、retry 或 error state；跨管理域还要回答 capability、撤销、generation、partial completion 与 endpoint failure。因此“地址语义”与“队列实现”不是非此即彼，常见实现会用地址式 API 驱动队列式硬件。
+前序 p.71–78 已展示 `Tile Load / Tile Store`、Descriptor 和少量同步原语；本场把它们放回三个可验证问题：payload 放到哪里、谁确认 completion、buffer lifetime 何时结束。理想接口可让 compiler/runtime 生成地址、分块、排队和完成 bookkeeping，而不是让 kernel 作者逐条管理 SQE/CQE；它隐藏的是软件接口，不是物理资源。底层仍有有限 queue/credit、outstanding tracker、protection/translation、retry 或 error state；跨管理域还要回答 capability、撤销、generation、partial completion 与 endpoint failure。因此“地址语义”与“队列实现”不是非此即彼，常见实现会用地址式 API 驱动队列式硬件。
 
 ## Slide 57｜Runtime TMA override：复用 layout，只替换本次 expert 的地址
 
@@ -1551,6 +1585,32 @@ UET: standardized wire-level transport and endpoint semantics
 
 三者不是同一个层次的替代品：UCCL 更适合验证和部署 transport policy，Falcon 把更多状态和处理放进专用硬件，UET 解决协议互操作与规范化；最终系统仍需分别回答 placement、ordering、completion、拥塞和故障恢复问题。[A31][A32][A40]
 
+## Backup Slide MRC1｜MRC 一次路径故障的事件时间线
+
+这张备份页用于答疑，不计入 72 页主讲编号：
+
+```text
+t0  chunk 被拆成 packet/placement units
+    └─ ECMP entropy 或 static SRv6 选择多个 path
+t1  packet spray 到达顺序不同
+    └─ RDMA virtual address/remote key + placement metadata 直接写入目标 buffer，记录 gap/duplicate
+t2  某条 path 出现 ECN、trim、NACK 或 health failure
+    └─ 只重传缺失范围，并暂时避开/重映射受影响的 EV/path
+t3  SACK 覆盖所需 bytes，transport completion 恢复
+    └─ consumer fence/ordering 满足后，GPU 继续计算
+t4  若语义是 SEND/RECV、READ 或 ATOMIC
+    └─ 不能假设 MRC transport 已覆盖，需检查 fallback 与新 tail
+```
+
+| 观察点 | 应记录的证据 | 不能直接推出的结论 |
+|---|---|---|
+| 路径健康 | per-path RTT、ECN、trim、port status、bytes | 某个端口异常不等于整个 job 必然失败 |
+| 可靠性 | SACK/NACK、gap、duplicate、retransmitted bytes | 重传完成不等于远端应用已经执行 |
+| 训练进度 | QP state、step throughput、rank skew、checkpoint | throughput 暂时下降不等于协议违反 SLA |
+| 语义覆盖 | WRITE/WRITE_IMM opcode、fallback path、ordering fence | “RC-compatible”不等于所有 verbs 已兼容 |
+
+讲师说明：论文的 50K-GPU 光模块案例应按这条时间线讲，明确它是一个公开报告的故障观察，不是对所有 MRC 部署的保证。若现场有人把 MRC 与 RFC 5041 DDP 直接画等号，回到 Slide 27：两者共享 direct-placement 思想，但 wire identity、可靠性和支持的 RDMA 语义不同。[A9][A10][A30][A42]
+
 ## Backup Slide R1｜Rubin sparse Attention：减少 movement，但不是透明压缩
 
 ```text
@@ -1615,9 +1675,9 @@ dense QKᵀ scores in TMEM
 - `Falcon`：官方可讲 lossy Ethernet、multipath、细粒度 RTT、hardware-enforced traffic shaping、fast retransmission、flexible ordering 与多 ULP。论文中的吞吐、Mops、tail 或丢包结果必须连同实验配置引用，不能提升为产品通用保证。
 - `ConnectX-8 PSA/DPA`：官方公开材料可确认 advanced routing、telemetry-based congestion control，以及 DOCA DPA programmable congestion-control events；当前证据不足以画 PSA 内部流水线、八平面实现或断言某段算法一定运行在哪个处理器上。
 - `UCCL`：论文 v2 描述的是在现有 RDMA NIC 上解耦 data/control path、由 host CPU 运行可扩展 transport control 的研究与实现。UC 是优先路径；RC/UD 是受 NIC 能力约束的兼容路径。论文性能数字只代表其 testbed，不外推为所有 NIC/拓扑的通用收益。当前开源仓库已扩展到 UCCL-Tran/P2P/EP，需与原论文范围分开。
-- `前序演讲的候选词汇`：`Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 只在新版 PDF 的术语表中被定义，正文未展开；它们不是当前标准协议的通用术语。讲稿只把它们作为分析问题，不宣称 UET、Falcon、UCCL、SUE 或 UALink 已采用同一对象模型。
+- `前序演讲的候选词汇`：`Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 在新版 PDF 的术语表和后续分层讨论中被提出，但仍不是当前标准协议的通用术语。讲稿把它们作为分析问题，不宣称 UET、Falcon、UCCL、SUE 或 UALink 已采用同一对象模型。
 - `传统 RC QP`：QP 常把寻址、顺序、可靠性、路径和 queue progress 关联起来，但不同 RNIC 与传输类型已有 SRQ/DC/adaptive routing/selective recovery 等扩展；不使用“所有 RC 永远单路径、Go-Back-N、依赖 PFC、出错必杀 QP”的绝对表述。
-- `Tile Load/Store 与 SQ/CQ`：Tile Load/Store 在新版前序 PDF 中是目录预告，不是已讲授或已标准化接口。地址式/tile 式 API 可以把 SQE/CQE bookkeeping 移入 compiler/runtime 或 device engine，但不能消灭有限 queue、credit、translation/protection、retry、completion 和 backpressure。`32–128 KiB` 只作为目录中的拟讨论范围，不当作跨 workload 或协议的固定最优值。
+- `Tile Load/Store 与 SQ/CQ`：新版前序 PDF 已将 Tile Load/Store、Descriptor、Barrier、Commit、Wait 作为架构语言展开，但它们不是跨厂商标准 API。地址式/tile 式 API 可以把 SQE/CQE bookkeeping 移入 compiler/runtime 或 device engine，但不能消灭有限 queue、credit、translation/protection、retry、completion 和 backpressure。`32–128 KiB` 只作为前序设计讨论的粒度范围，不当作跨 workload 或协议的固定最优值。
 - `跨机器 memory hierarchy`：把远端资源映射进地址空间不会自动获得本地内存的 failure/coherence semantics。跨管理域仍需 capability、撤销/generation、partial completion、unknown result、endpoint reset 与一致性范围定义。
 - `Scale-up/scale-out fusion`：通过 I/O memory/DPU/communication appliance 放置可靠性边界是架构选项。NetDAM 只能标为作者方案/研究设计；需要同时说明 staging、ownership、ordering、backpressure 和新增故障域。
 - `未经采用的量化数字`：不使用“5% 丢包仍 90% goodput”“Scale-Up IP 300–400 mm²”“TPU 单算子最多 512 卡”等未完成一手核验或强依赖配置的数字。
@@ -1637,7 +1697,7 @@ dense QKᵀ scores in TMEM
 - [A7] AWS, *Elastic Fabric Adapter*: https://aws.amazon.com/hpc/efa/
 - [A8] AWS Neuron documentation: https://awsdocs-neuron.readthedocs-hosted.com/
 - [A9] OpenAI, *Supercomputer networking to accelerate large scale AI training*, 2026-05-05: https://openai.com/index/mrc-supercomputer-networking/
-- [A10] *Resilient AI Supercomputer Networking using MRC and static SRv6*, arXiv:2605.04333: https://arxiv.org/abs/2605.04333
+- [A10] *Resilient AI Supercomputer Networking using MRC and SRv6*, arXiv:2605.04333: https://arxiv.org/abs/2605.04333
 - [A11] NCCL documentation and topology-aware collective literature: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/
 - [A12] Google Cloud, TPU system architecture documentation: https://cloud.google.com/tpu/docs/system-architecture-tpu-vm
 - [A13] UALink Consortium specifications/news: https://ualinkconsortium.org/
@@ -1650,6 +1710,7 @@ dense QKᵀ scores in TMEM
 - [A23] NVIDIA, *NVIDIA Blackwell Architecture* / Blackwell launch announcement. Official wording: “two reticle-limited dies connected by a 10 terabytes per second (TB/s) chip-to-chip interconnect in a unified single GPU”: https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture.md and https://nvidianews.nvidia.com/news/nvidia-blackwell-platform-arrives-to-power-a-new-era-of-computing
 - [A29] Mittal et al., *Revisiting Network Support for RDMA* (IRN), SIGCOMM 2018, DOI 10.1145/3230543.3230557: https://arxiv.org/abs/1806.08159
 - [A30] IETF RFC 5041, *Direct Data Placement over Reliable Transports*, October 2007: https://www.rfc-editor.org/rfc/rfc5041.html
+- [A42] Open Compute Project, *Multipath Reliable Connection (MRC) Specification 1.0*: https://www.opencompute.org/documents/ocp-mrc-1-0-pdf
 - [A31] Singhvi et al., *Falcon: A Reliable, Low Latency Hardware Transport*, SIGCOMM 2025, DOI 10.1145/3718958.3754353: https://dl.acm.org/doi/10.1145/3718958.3754353 ; Google Cloud overview: https://cloud.google.com/blog/topics/systems/introducing-falcon-a-reliable-low-latency-hardware-transport
 - [A32] Ultra Ethernet Consortium, *Ultra Ethernet Specification 1.0*, June 2025: https://ultraethernet.org/wp-content/uploads/sites/20/2025/06/UE-Specification-6.11.25.pdf
 - [A33] UALink Consortium, *UALink 200G Specification Rev 1.0 — Evaluation Copy*, April 2025: https://ualinkconsortium.org/wp-content/uploads/2025/04/UALink200_Specification_v1.0_Evaluation_Copy.pdf
@@ -1694,9 +1755,10 @@ dense QKᵀ scores in TMEM
 
 # 特别鸣谢
 
-特别感谢微信公众号 **zartbot** 长期整理并分享 GPU 多 Die、缓存一致性、RDMA、Scale-Up/Scale-Out 与可靠传输相关资料。本文在确定问题脉络和扩展阅读范围时重点参考了以下文章（微信公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-12）：
+特别感谢微信公众号 **zartbot** 长期整理并分享 GPU 多 Die、缓存一致性、RDMA、Scale-Up/Scale-Out 与可靠传输相关资料。本文在确定问题脉络和扩展阅读范围时重点参考了以下文章（微信公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-18）：
 
 - 《英伟达 GB200 架构解析 4：BlackWell 多 die 和 Cache 一致性相关的分析》
 - 《谈谈 RDMA 和 ScaleUP 的可靠传输》
+- 《“漫”谈 RDMA 现代化》及《谈谈 OpenAI 发布的 MRC》
 
-具体产品事实、协议字段和量化数字仍尽量回溯至上列官方文档、标准、论文和固定版本的开源仓库。文中若有疏漏，由本稿作者负责。
+后两篇 RDMA 文章按科普/评论性二手阅读使用：吸收其问题意识和教学比喻，不把其中的厂商自报数字、竞争性评价或未限定结论作为科学证据。具体产品事实、协议字段和量化数字仍尽量回溯至上列官方文档、标准、论文和固定版本的开源仓库。文中若有疏漏，由本稿作者负责。

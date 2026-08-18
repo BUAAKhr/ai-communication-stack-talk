@@ -1,6 +1,6 @@
 # 科学性审校说明
 
-本稿于 2026-08-14 完成零基础叙事重写及新版前序讲座对齐后的公开资料复核。审校目标不是证明所有未来产品细节，而是让每个结论落在正确的证据层级，并显式保留公开资料的边界。
+本稿于 2026-08-18 完成零基础叙事重写、MRC case study 补充及新版前序讲座对齐后的公开资料复核。审校目标不是证明所有未来产品细节，而是让每个结论落在正确的证据层级，并显式保留公开资料的边界。
 
 ## 已修正的关键问题
 
@@ -19,8 +19,10 @@
 13. UCCL-Tran（OSDI 2026；公开预印本 arXiv:2504.17307v2）描述的是基于现有 RDMA primitives 的 host-CPU software transport：优先 UC，兼容路径包括受限条件下的 RC 和 UD；只有 UC/UD 路径把 packet reliability 放到软件，RC 仍保留 NIC hardware reliability。它不是新 NIC，也不是自动把 RoCE/InfiniBand wire protocol 变成 UET。
 14. UCCL 的论文结果与实现细节受 testbed、NIC vendor、QP 数量、chunk size、CPU 预算和 collective shape 约束；4.5×、1.9× 及 EQDS tail-latency 数字不能外推为所有 GPU 集群的通用收益。
 15. 当前 UCCL 开源仓库的范围已经扩展到 UCCL-Tran、UCCL-P2P 和 UCCL-EP。讲稿分别引用论文与固定仓库 commit，不把后来项目能力倒推成原论文结论。
-16. 已与前序演讲《Towards Modern Networking System》更新版 56 页 PDF 逐页对照并完成文字与视觉核验。其实际正文展开了 link/router、Orderlock、Domain、同步/SQ-CQ 与 Ethernet/TCP；目录预告的 Connection/Tunnel/Path、Bounded Transaction、Fence 和 Tile-based Computing 并未在交付 PDF 中展开。本场只压缩 recall 已讲基础，其余从零讲授。
-17. 前序第 3–4 页的 `Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 被保留为讲者提出的候选对象，不与 RDMA QP/RC、UET PDC/CCC、Falcon connection、UCCL connection/chunk 或 compute tile 混用。`Reliable Tunnel` 是共享 packet-reliability resource，不是 encapsulation tunnel；`Bounded Transaction` 也不是数据库原子事务。
+15a. MRC 被作为生产 case study，而不是完整 RDMA 替代品：规范/论文支持 packet-level multipath、direct placement、SACK/selective retransmission、ECN、路径健康和可选 packet trimming；ECMP entropy 与 static SRv6 是两种路径方案。公开 transport 子集仅含 RDMA WRITE/WRITE-with-IMMEDIATE，不能推断 SEND/RECV、READ、ATOMIC 已支持。50K/75K-GPU 故障案例、64-GPU 受控丢包实验、约 770 Gb/s 和 5.09/6.54 μs 均标为论文特定部署/配置结果，不是普遍 SLA；论文报告的 NIC transceiver 全端口故障仍可能使 QP 失败。
+15b. OCP MRC 1.0 的规范链接已记录为 [A42]，但本轮环境访问 OCP 下载端点时被 Cloudflare 拦截，未做逐条 clause 引用；MRC 功能和测量结论由可访问的 [A9]/[A10] 交叉核对。对外发布前应再用取得的规范副本核对 revision、字段和强制性措辞。
+16. 已与前序演讲《Towards Modern Networking System》79 页 PDF 逐页对照并完成文字与视觉核验。其正文展开了 link/router、Orderlock、Domain、同步/SQ-CQ、Ethernet/TCP，以及 p.64–70 的网络分层、RC QP 耦合批评、multi-plane/SRv6 风格路径和 p.71–78 的 Tile/Descriptor/Barrier/Commit/Wait/Unified System。本场应把这些前序抽象放入具体 GPU tensor、RDMA、MRC、MoE、KV 和 distributed-kernel 数据路径，不再声称后半段“未展开”。
+17. 前序第 3–4 页的 `Software Connection / Reliable Tunnel / Physical Path / DMA Context / Bounded Transaction` 仍被保留为讲者提出的候选对象，不与 RDMA QP/RC、UET PDC/CCC、Falcon connection、UCCL connection/chunk 或 compute tile 混用。新版后半段虽已把相关分层和 Tile 语义初步展开，仍不能据此声称它们是共同标准对象。`Reliable Tunnel` 是共享 packet-reliability resource，不是 encapsulation tunnel；`Bounded Transaction` 也不是数据库原子事务。
 18. 已删除“前序第 50 页系统批评 RC QP”的错误归因：该页实际展示 SQ/CQ 生命周期。主讲对传统 QP 耦合的分析由 IRN、Falcon、UET、UCCL 等一手资料独立支持，并继续限定为常见设计模式；不同 RNIC/transport 已提供 SRQ、DC、adaptive routing、selective recovery 等扩展。
 19. Tile/address-style programming 被解释为把 queue bookkeeping 移入 compiler/runtime/device engine；底层有限 queue、credit、translation/protection、retry、completion 和 backpressure 仍然存在。`32–128 KiB` 是设计建议，不是跨 workload/协议的固定最优范围。
 20. 远端资源映射进入地址空间不等于自动获得本地 memory semantics；跨管理域仍需 capability、撤销/generation、partial completion、unknown result、endpoint reset、memory scope 与一致性边界。
@@ -51,9 +53,9 @@
 - 通过 I/O memory/DPU/communication appliance 放置可靠性边界是一种架构选择，不是已经统一的行业标准。
 - UCCL 的软件控制面主要依赖 RTT/丢包等仍可见的信号；RNIC 已消费的 ECN、trim 或 vendor-specific telemetry 不会自动出现在用户态。CPU engine、host NUMA、polling、QP context 和 UD 重组开销必须纳入线速与尾延迟评估。
 - 前序 p.3–4 的 connection/tunnel/path、transaction/fragment/incarnation、DMA context、aperture、retirement、fence 与 aggregation engine 是候选架构语言，不当作 UEC、SUE、UALink、Falcon、UCCL 或当前 RNIC 的共同对象模型。
-- 前序 p.47 的同步、p.48 的 prior/posterior、p.50 的 SQ/CQ 以及 p.51–56 的 Ethernet/TCP 内容只用于建立直觉；主讲中的完成语义、wire behavior 和量化结论仍回溯至标准、论文、官方文档和固定代码版本。
+- 前序 p.47 的同步、p.48 的 prior/posterior、p.50 的 SQ/CQ、p.52–59 的 Ethernet/TCP，以及 p.64–78 的网络分层与 Tile/Unified System 内容用于建立架构直觉；主讲中的完成语义、wire behavior 和量化结论仍回溯至标准、论文、官方文档和固定代码版本。
 ## 自动检查结果
 
 - 主讲页：72 页，编号连续且无重复。
-- 引用标签：58 个使用项与 58 个定义项闭合，无悬空引用。
+- 引用标签：59 个使用项与 59 个定义项闭合，无悬空引用。
 - 主要公式：Ring AllReduce 每 rank 传输量和两个 BDP 数量级示例已复核。

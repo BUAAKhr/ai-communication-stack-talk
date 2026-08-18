@@ -1,6 +1,6 @@
 # 参考资料
 
-资料核对日期：2026-08-14。引用编号与 [TALK.md](TALK.md) 保持一致。
+资料核对日期：2026-08-18。引用编号与 [TALK.md](TALK.md) 保持一致。
 
 证据等级：
 
@@ -8,7 +8,7 @@
 - `[B]`：官方开源仓库、项目文档或固定版本的实现证据。
 - `[C]`：厂商公开预告或披露仍不完整的快速演进能力。
 
-前序演讲 `Towards Modern Networking System(1).pdf` 作为议程衔接和术语对齐材料单独记录在 [PREDECESSOR-ALIGNMENT.md](PREDECESSOR-ALIGNMENT.md)。它包含讲者原创的候选架构词汇与教学类比，因此不编入 `[A]/[B]/[C]` 科学证据编号；本稿的产品事实、协议字段和定量结论仍由下列一手资料支持。
+前序演讲 `Towards Modern Networking System.pdf` 作为议程衔接和术语对齐材料单独记录在 [PREDECESSOR-ALIGNMENT.md](PREDECESSOR-ALIGNMENT.md)。它包含讲者原创的候选架构词汇与教学类比，因此不编入 `[A]/[B]/[C]` 科学证据编号；本稿的产品事实、协议字段和定量结论仍由下列一手资料支持。
 
 ## 官方架构、产品与软件文档
 
@@ -37,6 +37,7 @@
 ## Standards and Specifications
 
 - [A30] IETF RFC 5041, [Direct Data Placement over Reliable Transports](https://www.rfc-editor.org/rfc/rfc5041.html), October 2007.
+- [A42] Open Compute Project, [Multipath Reliable Connection (MRC) Specification 1.0](https://www.opencompute.org/documents/ocp-mrc-1-0-pdf). The specification is the normative source for MRC wire behavior; quantitative production results remain tied to [A10].
 - [A32] Ultra Ethernet Consortium, [Ultra Ethernet Specification 1.0](https://ultraethernet.org/wp-content/uploads/sites/20/2025/06/UE-Specification-6.11.25.pdf), June 2025.
 - [A33] UALink Consortium, [UALink 200G Specification Rev 1.0, Evaluation Copy](https://ualinkconsortium.org/wp-content/uploads/2025/04/UALink200_Specification_v1.0_Evaluation_Copy.pdf), April 2025.
 - [A34] Broadcom, [Scale-Up Ethernet Framework Specification](https://docs.broadcom.com/docs/scale-up-ethernet-framework), Scale-Ethernet-RM104, 2025-09-26.
@@ -44,7 +45,7 @@
 
 ## Papers
 
-- [A10] *Resilient AI Supercomputer Networking using MRC and static SRv6*, [arXiv:2605.04333](https://arxiv.org/abs/2605.04333).
+- [A10] *Resilient AI Supercomputer Networking using MRC and SRv6*, [arXiv:2605.04333](https://arxiv.org/abs/2605.04333).
 - [A16] *Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving*, FAST 2025, [arXiv:2407.00079](https://arxiv.org/abs/2407.00079).
 - [A17] *DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference*, [arXiv:2602.21548](https://arxiv.org/abs/2602.21548).
 - [A18] Zheng et al., *TileLink: Generating Efficient Compute-Communication Overlapping Kernels using Tile-Centric Primitives*, MLSys 2025, [arXiv:2503.20313](https://arxiv.org/abs/2503.20313).
@@ -85,9 +86,11 @@
 
 ## Acknowledged Secondary Reading
 
-特别感谢微信公众号 **zartbot**。以下文章帮助确定了问题脉络和扩展阅读范围；公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-14：
+特别感谢微信公众号 **zartbot**。以下文章帮助确定了问题脉络和扩展阅读范围；公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-18：
 
 - 《英伟达 GB200 架构解析 4：BlackWell 多 die 和 Cache 一致性相关的分析》
 - 《谈谈 RDMA 和 ScaleUP 的可靠传输》
+- 《“漫”谈 RDMA 现代化》
+- 《谈谈 OpenAI 发布的 MRC》（从 RDMA 现代化角度评论 OpenAI MRC）
 
-讲稿中的产品事实、协议字段和量化数字仍回溯到上面的官方资料、标准、论文或固定版本的代码。
+后两篇是科普/评论性二手阅读：讲稿吸收其问题意识和教学比喻，但不把其中的厂商自报数字、竞争性评价或未限定结论当作 `[A]/[B]/[C]` 证据。讲稿中的产品事实、协议字段和量化数字仍回溯到上面的官方资料、标准、论文或固定版本的代码。
