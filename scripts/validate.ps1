@@ -7,10 +7,10 @@ $referencesText = Get-Content -LiteralPath $referencesPath -Raw -Encoding UTF8
 
 $slideMatches = [regex]::Matches($text, '(?m)^## Slide ([0-9]+)')
 $slides = @($slideMatches | ForEach-Object { [int]$_.Groups[1].Value })
-$expected = @(1..72)
+$expected = @(1..88)
 
-if ($slides.Count -ne 72) {
-    throw "Expected 72 slides, found $($slides.Count)."
+if ($slides.Count -ne 88) {
+    throw "Expected 88 slides, found $($slides.Count)."
 }
 
 for ($i = 0; $i -lt $expected.Count; $i++) {
@@ -35,8 +35,8 @@ $mainSlideBodies = [regex]::Matches(
     $text,
     '(?ms)^## Slide ([0-9]+)[^\r\n]*\r?\n(.*?)(?=^## Slide [0-9]+|\z)'
 )
-if ($mainSlideBodies.Count -ne 72) {
-    throw "Expected 72 complete main-slide bodies, found $($mainSlideBodies.Count)."
+if ($mainSlideBodies.Count -ne 88) {
+    throw "Expected 88 complete main-slide bodies, found $($mainSlideBodies.Count)."
 }
 
 $speakerNoteMarker = ([char]0x8BB2).ToString() +
@@ -131,4 +131,4 @@ foreach ($markdownFile in $markdownFiles) {
     }
 }
 
-Write-Host "Validation passed: 72 slides, $($used.Count) closed references, synchronized reference index, no placeholders."
+Write-Host "Validation passed: 88 slides, $($used.Count) closed references, synchronized reference index, no placeholders."

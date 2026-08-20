@@ -1,6 +1,6 @@
 # 科学性审校说明
 
-本稿于 2026-08-18 完成零基础叙事重写、MRC case study 补充及新版前序讲座对齐后的公开资料复核。审校目标不是证明所有未来产品细节，而是让每个结论落在正确的证据层级，并显式保留公开资料的边界。
+本稿于 2026-08-21 完成零基础叙事重写、MRC case study、100K+ GPU 通信栈案例、推理硬件专题及新版前序讲座对齐后的公开资料复核。审校目标不是证明所有未来产品细节，而是让每个结论落在正确的证据层级，并显式保留公开资料的边界。
 
 ## 已修正的关键问题
 
@@ -43,6 +43,14 @@
 35. 前序的 `Terminal Result` 分为 success、definite rejection 和 unknown transport failure；timeout 只是本地观察到等待超限，不自动证明远端未执行，也不应伪造确定失败结果。
 36. `Send Fence` 只控制后继 transaction 何时进入网络，`Execute Fence` 只控制目标执行资格；两者都不自动提供 arrival order、completion order、multi-packet atomic commit 或 exactly-once effect。
 37. 前序 p.52 的 packet “atomic”只按 framing/forwarding unit 理解，不提升为应用事务原子性；p.53–54 的 Ethernet/L2 规则是入门启发式，不覆盖 VLAN、overlay、LAG/ECMP、控制平面和具体 switch pipeline。
+38. SIGCOMM 2026 的 100K+ GPU 案例使用论文 [A44] 作为生产部署和实验结果来源：100K+ GPU、跨 building 最高约 30× latency、CCLX 约 11× initialization improvement、约 2× communication HBM reduction、DQPLB buffering/throughput 数字都绑定论文的 fabric、rank、NIC、message shape 和对照实现。CCLX/NCCLX/RCCLX、CTran、DQPLB、Fault Analyzer、PerfProfiler 和 CPU emulation 的职责按论文描述区分，不能倒推为 NCCL、RDMA 或所有生产集群的通用行为。
+39. DQPLB 的 `QP × segment × outstanding ≈ BDP` 是设计直觉，不是协议常数；多 QP 乱序需要 sequence/reorder state，降低 switch buffering 不等于在所有消息大小上提升 throughput。
+40. CCLX 的 10 GB/80 GB H100、约 175 s restart budget、96K virtual-rank CPU emulation 和约 100× synchronization case 都是 [A44] 的配置或案例；CPU emulation 只保证 control-plane fidelity，不模拟 GPU data-plane performance。
+41. 推理硬件章节使用 [A43] 讨论 HBF、PNM、3D stacking 和低延迟互联的研究方向，不把它们写成成熟产品或普遍优于 PIM 的结论。Prefill/decode 的 compute/memory-bound 分类是 workload tendency。
+42. Cerebras CS-4 的 44 GB SRAM/wafer、43 PB/s aggregate SRAM bandwidth、2.4 Tb/s off-wafer I/O、2–3 μs path、125–135 kW rack 等来自用户提供的 SemiAnalysis 二手摘录 [C3]；这些是报道/特定配置口径，不能与 Rubin/HBM 或 CS-3 的不同 power baseline 直接比较。43 PB/s 也不能与外部 HBM 带宽做同口径比较。
+43. Groq 页只保留公开材料支持的 compiler/static scheduling、spatial dataflow 和 SRAM-centric design-space 描述。[C4] 未确认的内部微架构、确切功耗、cycle-level determinism 和 3D stacking 均不作事实断言。
+44. HBF 更适合低写入的冷权重/冷 context；热 KV 的写入压力、flash 页粒度、延迟、寿命和写放大仍需单独评估。PNM、3D stacking、low-latency interconnect 是研究/架构方向，不自动解决容量、热、接口标准或故障问题。
+45. NetDAM [A39] 是 2021 FPGA/100GE 研究原型；其延迟/jitter 不能线性外推到 1 Tb/s 量产系统。network-attached memory 仍需 ownership、capability、ordering、completion、backpressure、security 和 failure recovery，不等于透明共享内存。
 
 ## 演讲时仍需限定
 
@@ -56,6 +64,6 @@
 - 前序 p.47 的同步、p.48 的 prior/posterior、p.50 的 SQ/CQ、p.52–59 的 Ethernet/TCP，以及 p.64–78 的网络分层与 Tile/Unified System 内容用于建立架构直觉；主讲中的完成语义、wire behavior 和量化结论仍回溯至标准、论文、官方文档和固定代码版本。
 ## 自动检查结果
 
-- 主讲页：72 页，编号连续且无重复。
-- 引用标签：59 个使用项与 59 个定义项闭合，无悬空引用。
+- 主讲页：88 页，编号连续且无重复。
+- 引用标签：引用使用项与定义项闭合，无悬空引用。
 - 主要公式：Ring AllReduce 每 rank 传输量和两个 BDP 数量级示例已复核。

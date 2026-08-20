@@ -6,7 +6,7 @@
 
 ## 内容
 
-- 72 页主讲内容，独立讲授约 148 分钟；紧接前序演讲时建议压缩为约 136 分钟。
+- 88 页主讲内容，独立讲授约 188 分钟；紧接前序演讲时建议压缩为约 170–180 分钟。
 - 一个统一的端到端性能模型：source readiness、launch/progress、staging、queueing、serialization、placement、completion、consumer wait、recovery 与 overlap。
 - 一张 13 层透明性阶梯，用来定位 `all_reduce()`、P2P、MoE dispatch、distributed kernel 和 KV movement 下方的隐藏工作。
 - 一张 API 入口到隐藏层次的映射：PyTorch collective、NCCL、RDMA verbs 与 device-side put/store 分别站在哪一层之上。
@@ -23,6 +23,8 @@
 - compute-communication overlap、异步数据搬运、distributed kernel。
 - DeepGEMM MegaMoE 的真实 dataflow，以及与 FlashInfer CuTeDSL MegaMoE、FlashMoE 的边界。
 - KV cache、Mooncake、DualPath、HiSparse 与 context-memory tier。
+- SIGCOMM 2026 的 100K+ GPU 生产通信栈：CCLX 初始化/HBM 管理、DQPLB 的 BDP 感知流控、Fault Analyzer、PerfProfiler 与 CPU emulation。
+- 推理硬件专题：Cerebras CS-4、Groq 设计空间、HBF、PNM、3D memory–logic stacking、低延迟互联与 NetDAM。
 
 ## 阅读入口
 
@@ -35,7 +37,7 @@
 
 - `[A]`：官方规范、官方文档或正式论文。
 - `[B]`：官方开源仓库、项目文档或固定版本的实现证据。
-- `[C]`：厂商公开预告或披露仍不完整的快速演进能力。
+- `[C]`：快速演进的公开材料、厂商预告或用户提供的二手分析；不作为一手规范。
 
 产品事实、学术方案和基于公开材料的推断在讲稿中分开表达。开源实现尽量固定到 commit，避免项目后续演进改变原始语义。
 
@@ -49,7 +51,7 @@
 ./scripts/validate.ps1
 ```
 
-校验包括 72 页编号连续性、引用闭包、重复引用定义和残留占位词。
+校验包括 88 页编号连续性、引用闭包、重复引用定义和残留占位词。
 
 ## 特别鸣谢
 
@@ -58,6 +60,7 @@
 - 《英伟达 GB200 架构解析 4：BlackWell 多 die 和 Cache 一致性相关的分析》
 - 《谈谈 RDMA 和 ScaleUP 的可靠传输》
 - 《“漫”谈 RDMA 现代化》及《谈谈 OpenAI 发布的 MRC》（作为科普/评论性二手阅读，不作为科学证据）
+- 《大语言模型推理硬件的挑战与研究方向》、SemiAnalysis 的 CS-4 文章摘录，以及用户提供的 SIGCOMM 2026 论文《Connecting 100K+ GPUs》共同扩展了推理硬件、100K+ GPU 通信栈与运维可观测性部分。
 
 具体事实和数字仍尽量回溯至官方文档、标准、论文与固定版本的开源仓库。
 

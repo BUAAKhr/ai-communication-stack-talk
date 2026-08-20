@@ -1,6 +1,6 @@
 # 参考资料
 
-资料核对日期：2026-08-18。引用编号与 [TALK.md](TALK.md) 保持一致。
+资料核对日期：2026-08-21。引用编号与 [TALK.md](TALK.md) 保持一致。
 
 证据等级：
 
@@ -60,6 +60,8 @@
 - [A39] Fang and Peng, [NetDAM: Network Direct Attached Memory with Programmable In-Memory Computing ISA](https://arxiv.org/abs/2110.14902), 2021.
 - [A40] Zhou et al., [UCCL-Tran: An Extensible Software Transport Layer for GPU Networking](https://www.usenix.org/conference/osdi26/presentation/zhou-yang), OSDI 2026, pp. 1143–1166; [public preprint](https://arxiv.org/abs/2504.17307v2). The paper describes a host-CPU control path over existing RDMA primitives, software multipathing, control coalescing and selective recovery; reported speedups are tied to the paper's testbeds.
 - [A41] Jiang et al., [Orderlock: A New Type of Deadlock and its Implications on High Performance Network Protocol Design](https://doi.org/10.1145/3718958.3750497), SIGCOMM 2025, pp. 575–591. In its model, simultaneous in-order delivery, lossless transmission and out-of-order capability form the necessary and sufficient condition for Orderlock.
+- [A43] Xiaoyu Ma et al., [Challenges and Research Directions for Large Language Model Inference Hardware](https://arxiv.org/abs/2601.05047), arXiv:2601.05047.
+- [A44] Hongyi Zeng et al., *Connecting 100K+ GPUs: Building the Communication Stack for Large-Scale LLM Training*, ACM SIGCOMM 2026, pp. 505–518, DOI [10.1145/3789240.3829152](https://doi.org/10.1145/3789240.3829152). The local user-provided PDF reports Meta production deployment and experiment-specific results.
 
 ## Pinned Open-Source Evidence
 
@@ -83,14 +85,19 @@
 ## Rapidly Evolving Public Material
 
 - [C2] NVIDIA, [CMX Context Memory Platform](https://resources.nvidia.com/en-us/accelerated-networking-resource-library/cmx-tech-blog). Treat branding, availability and implementation details as version-sensitive.
+- [C3] SemiAnalysis, *Cerebras's Next Generation CS-4: Fast Just Got Faster*, Myron Xie et al., 2026-08-19. User-provided excerpt from a paid secondary analysis; no stable public URL supplied.
+- [C4] Public Groq architecture/product materials plus user-provided zartbot commentary. Used only for high-level design-space context; unpublished microarchitecture and quantitative claims are excluded.
 
 ## Acknowledged Secondary Reading
 
-特别感谢微信公众号 **zartbot**。以下文章帮助确定了问题脉络和扩展阅读范围；公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-18：
+特别感谢微信公众号 **zartbot**。以下文章帮助确定了问题脉络和扩展阅读范围；公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-21：
 
 - 《英伟达 GB200 架构解析 4：BlackWell 多 die 和 Cache 一致性相关的分析》
 - 《谈谈 RDMA 和 ScaleUP 的可靠传输》
 - 《“漫”谈 RDMA 现代化》
 - 《谈谈 OpenAI 发布的 MRC》（从 RDMA 现代化角度评论 OpenAI MRC）
+- 《大语言模型推理硬件的挑战与研究方向》（吸收 HBF、PNM、3D stacking、低延迟互联与 NetDAM 的问题框架）
+- SemiAnalysis, *Cerebras's Next Generation CS-4: Fast Just Got Faster*（用户提供的付费文章摘录）
+- 《Connecting 100K+ GPUs: Building the Communication Stack for Large-Scale LLM Training》（用户提供的 SIGCOMM 2026 PDF）
 
 后两篇是科普/评论性二手阅读：讲稿吸收其问题意识和教学比喻，但不把其中的厂商自报数字、竞争性评价或未限定结论当作 `[A]/[B]/[C]` 证据。讲稿中的产品事实、协议字段和量化数字仍回溯到上面的官方资料、标准、论文或固定版本的代码。

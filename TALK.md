@@ -1,10 +1,10 @@
 # AI Communication Stack: From One Tensor to the Whole System
 
-> 零基础公开审校稿 v0.9，资料核对日期：2026-08-18。
+> 零基础公开审校稿 v0.9，资料核对日期：2026-08-21。
 >
-> 独立讲授建议时长：142–148 分钟；紧接《Towards Modern Networking System》联讲时建议约 132–138 分钟。主讲 72 页，另附备份页、demo 与制图建议。屏幕正文控制信息密度，完整因果链、观测方法和易错边界写在讲师说明中。
+> 独立讲授建议时长：约 186–192 分钟；紧接《Towards Modern Networking System》联讲时建议约 170–180 分钟。主讲 88 页，另附备份页、demo 与制图建议。屏幕正文控制信息密度，完整因果链、观测方法和易错边界写在讲师说明中。
 >
-> 证据标签：`[A]` 官方规范、官方文档或正式论文；`[B]` 官方开源仓库/项目文档；`[C]` 厂商公开演讲、产品预告或尚未充分披露的 2026 新项目。`[C]` 内容适合讲趋势，不宜讲成稳定产品事实。涉及产品微架构时再区分“官方产品事实 / 学术研究方案 / 基于公开材料的推断”，不能用论文方案反推量产芯片实现。
+> 证据标签：`[A]` 官方规范、官方文档或正式论文；`[B]` 官方开源仓库/项目文档；`[C]` 快速演进的公开材料、厂商预告或用户提供的二手分析。`[C]` 内容适合讲趋势，不宜讲成稳定产品事实或一手规范。涉及产品微架构时再区分“官方产品事实 / 学术研究方案 / 基于公开材料的推断”，不能用论文方案反推量产芯片实现。
 
 ## 课程主张与学习目标
 
@@ -78,10 +78,11 @@ consumer synchronization and recovery
 | 2. fabric 提供哪些语义与保证 | 22–33 | 29 min |
 | 3. 软件如何把依赖变成工作 | 34–49 | 31 min |
 | 4. 如何用 overlap 与 co-design 缩短关键路径 | 50–71 | 44 min |
-| 总结 | 72 | 2 min |
-| **总计** | **72** | **148 min** |
+| 5. 100K+ GPU 通信栈与推理硬件 | 72–87 | 38 min |
+| 总结 | 88 | 2 min |
+| **总计** | **88** | **188 min** |
 
-联讲版不删除页面，但把 Slide 22–25 中前序已经讲过的 credit、HOL、lossless 与 replay 机制压缩为约 8 分钟，重点保留“这些机制在一个真实 tensor transfer 中改变了什么”。Slide 26–33 仍完整讲多路径、恢复、拥塞和可靠性边界；总时长约 136 分钟。
+联讲版不删除页面，但把 Slide 22–25 中前序已经讲过的 credit、HOL、lossless 与 replay 机制压缩为约 8 分钟，重点保留“这些机制在一个真实 tensor transfer 中改变了什么”。Slide 26–33 仍完整讲多路径、恢复、拥塞和可靠性边界；新增案例可压缩为约 170–180 分钟。
 
 ---
 
@@ -1405,9 +1406,277 @@ not merely maximize link utilization.
 ---
 
 ---
-# 总结（146–148 min）
 
-## Slide 72｜离场前，用一次 x[i] 检查自己是否真的理解
+## 5. 100K+ GPU 通信栈与推理硬件
+
+## Slide 72｜100K+ GPU：问题从 steady state 扩展到整个通信栈
+
+屏幕正文：
+
+```text
+100K+ GPU、跨多个 building
+        │
+        ├─ communication library：初始化与 HBM/resource footprint
+        ├─ transport：异构 RTT/BDP 与 MoE bursty all-to-all
+        └─ operations：故障因果、性能归因、低成本仿真
+```
+
+讲师说明：SIGCOMM 2026 的 Meta 生产案例把一个常被拆散的问题放回同一条链路：物理拓扑跨多个数据中心 building，跨层延迟相对 rack 内最高约 30 倍；MoE 动态路由制造突发、非规则的 all-to-all；硬件故障从异常变成日常事件。[A44] 论文报告其 RoCE fabric 已连接超过 100,000 个 GPU，但这些数字是该部署的规模描述，不是所有集群的必要配置。最重要的观点不是“换一个 collective”，而是 library、transport 和 observability 必须共同设计。
+
+---
+
+## Slide 73｜CCLX：先把初始化和资源管理从关键路径中解耦
+
+屏幕正文：
+
+```text
+Global communicator / process-group state reuse
+        ↓
+异步 I/O bootstrap + O(N) topology discovery
+        ↓
+lazy channel / buffer / metadata allocation
+        ↓
+模型加载、数据准备与通信初始化重叠
+```
+
+讲师说明：论文中的 CCLX（NVIDIA 平台版本也称 NCCLX，AMD 平台版本称 RCCLX）提供 host-initiated、带 GPU-resident metadata 的 host API 和 device-initiated API 等执行模式，并可在 baseline NCCL 与自定义 CTran 路径之间选择。[A44] 其关键不是把 NCCL 简单替换掉，而是复用 global communicator 状态、异步化 bootstrap、避免每个 process group 重复全局交换，并按实际算法和 channel 需求分配资源。论文报告初始化时间最高约 11 倍改善、通信 HBM 开销约 2 倍降低；这两个数字绑定其 testbed、rank 数和实现版本，不能当作通用保证。
+
+---
+
+## Slide 74｜为什么“轻量初始化”在 100K 规模会变成可靠性问题
+
+屏幕正文：
+
+```text
+频繁重启 × 全局 bootstrap × O(N²) state exchange
+                         ↓
+                 restart downtime
+
+CCLX：state reuse · async bootstrap · lazy provisioning · slab metadata
+```
+
+讲师说明：论文用一个运维预算说明量级：在其假设的失败频率和 90% effective training time 目标下，每次 restart 只有约 175 秒预算，而传统初始化可能超过这个预算。论文还报告 80 GB H100 中通信库在某些配置约占 10 GB（约 12.5%），因此初始化和 resource footprint 会反过来影响 batch、模型容量和 goodput。[A44] 这里的 175 秒、10 GB 和 12.5% 都是论文的部署/配置分析，不是所有 NCCL 作业的固定开销。slab allocator 解决的是大量小 metadata allocation 的碎片与对齐成本；它不等于消除 QP、buffer、registration 或 NIC context 的总状态。
+
+---
+
+## Slide 75｜DQPLB：把 zero-copy 的低延迟和 segmentation 的流控合起来
+
+屏幕正文：
+
+```text
+zero-copy 整块 post  ──低延迟──▶  burst / switch buffer buildup
+copy + segmentation  ──有节奏──▶  额外 copy
+
+DQPLB：多 data QP + bounded outstanding + sequence reorder
+       QP 数 × segment × outstanding ≈ path BDP
+```
+
+讲师说明：Dynamic Queue Pair Load Balancing（DQPLB）是论文的 transport 机制。它根据路径 RTT/BDP 和消息形态动态选择 data QP 数、segment size 与 outstanding limit，使跨 building 的高 BDP 路径能保持足够 in-flight data，同时避免一次性把大消息推成交换机 burst。[A44] 多 QP 会产生乱序，接收端用 sequence number、滑动窗口和有限缓存重排；小消息可走 dedicated fast path，避免每个操作都进入完整的 reorder bookkeeping。公式是设计直觉，不是协议常数，也不能由 BDP 直接推出最优 QP 数。
+
+---
+
+## Slide 76｜DQPLB 的收益边界：吞吐、buffer、拓扑与 workload 一起看
+
+屏幕正文：
+
+```text
+目标不是“永远更多 QP”
+
+same rack      → 小 BDP、小 outstanding
+cross zone     → 更大 BDP、不同 pacing
+cross building → 需要更多 in-flight，但要限制 burst
+```
+
+讲师说明：论文在其 400 Gb/s NIC 和 collective testbed 上报告：不同规模 All-to-Allv 的 peak switch buffering 可下降约 75–90%；256-GPU AllGather 的 peak buffering 下降约 72%，某个 8 MB case 的 bus bandwidth 提升约 13%，而 1 GB case 未观察到性能惩罚。[A44] 这些是论文特定 shape、拓扑、消息大小和对照实现的结果，不应改写成“DQPLB 普遍提升 13%”。更一般的可迁移结论是：transport 参数应是 `f(RTT, BDP, message shape, topology, queue budget)`，不能用一组全局固定值覆盖整个 fabric。
+
+---
+
+## Slide 77｜Fault Analyzer：从 cascading timeout 回溯 root cause
+
+屏幕正文：
+
+```text
+collective trace
+  scheduled → started → completed
+                 ↓
+       inter-collective dependency DAG
+                 ↓
+       culprit collective / rank / host / NIC
+```
+
+讲师说明：同步训练里，一个 rank 未启动或未完成，就可能让后续数百个 collective 一起 timeout。论文的 Fault Analyzer 用 CollTrace 和 inter-collective dependency graph 区分 root-cause collective 与 cascading stalls，再结合参数一致性、kernel launch、rank-pair network error 和 wait-for graph 缩小到 rank/host/NIC 或软件缺陷。[A44] 这和“看谁先报错”不同：先报错的往往只是受害者。论文案例把约 500 个 timeout 归因到一个未 launch 的 rank，也把另一个案例的数百个 timeout 归因到 NIC malfunction；应把它们作为案例，不当成故障率或诊断准确率的普遍统计。
+
+---
+
+## Slide 78｜PerfProfiler 与 CPU emulation：把可观测性和规模测试前移
+
+屏幕正文：
+
+```text
+AlgoProfiler：registration / control sync / data transfer
+SlowRankDetector：WQE issue → completion → rolling bandwidth
+
+CPU emulation：mock CUDA + verbs + stable handles
+               用 CPU rank 验证 control-plane scale
+```
+
+讲师说明：PerfProfiler 把 collective algorithm 层和 CTran transport 层的时间戳关联起来，区分 registration、同步、数据传输或 slow rank；论文案例中某些 rank 的 synchronization duration 变长约 100 倍，但 data-transfer duration 正常，根因是慢 I/O，而非网络。[A44] 分布式 CPU emulation 则通过 library interposition 模拟 CUDA、libibverbs、QP、memory region 和 event 生命周期，在论文中用 12K CPU server 表示约 96K virtual ranks。它验证的是 control-plane fidelity，不是 GPU data-plane 性能；因此不能替代真实带宽、PCIe、HBM 或 NIC 测试。
+
+---
+
+## Slide 79｜从 100K 训练到推理硬件：decode 把 memory、interconnect 与 packaging 绑在一起
+
+屏幕正文：
+
+```text
+Prefill：通常更接近 compute-bound
+Decode：通常更接近 memory/latency-bound
+
+TTFT · TPOT · tokens/s/user · weight/KV capacity · fabric tail
+```
+
+讲师说明：这是趋势性分类，不是绝对定律。batch、序列长度、量化、并行策略和 kernel 实现会改变 roofline。Prefill 往往有更高算术强度；decode 每轮工作量小，却要反复读取权重并访问不断增长的 KV cache，因此常被 memory hierarchy、片间通信和排队抖动支配。TTFT 与 TPOT 不能被单一 tokens/s 数字替代。[A43] SIGCOMM 案例说明训练通信栈的全局规模问题；下面几页进一步讨论推理时的容量、带宽和低延迟硬件取舍。
+
+---
+
+## Slide 80｜Memory wall：每一层都在交换容量、带宽、延迟与寿命
+
+屏幕正文：
+
+```text
+SRAM：低延迟/高带宽/小容量
+HBM：高带宽/中等容量/封装成本
+DDR：容量与成本/较弱带宽
+Flash/HBF：大容量/页读取/写寿命约束
+
+权重 ≠ KV cache ≠ 临时激活
+```
+
+讲师说明：decode 的压力不是缺一种“更快的内存”，而是对象生命周期和访问模式不一样。权重通常相对静态，KV cache 会随请求写入、回收和迁移，激活与通信 buffer 是短生命周期热数据。HBF 更适合低写入的冷权重或冷 context；不能默认承载热 KV。任何层次结构都要列出容量、有效带宽、访问粒度、尾延迟、写放大、寿命与故障恢复。[A43]
+
+---
+
+## Slide 81｜Cerebras CS-4：同一 WSE-3，靠时钟、供电和机架密度换性能
+
+屏幕正文：
+
+```text
+用户提供的 SemiAnalysis 二手整理：
+  WSE-3：约 44 GB 片上 SRAM/wafer（容量不变）
+  更高时钟与供电/液冷，目标约 2× 性能
+  约 2.4 Tb/s off-wafer I/O（报道口径）
+```
+
+讲师说明：本页数字来自用户提供的 SemiAnalysis 付费文章摘录和公开披露的二手整理，不是完整产品规范。[C3] “约 44 GB”是每片 wafer 的 SRAM 容量，不是外部内存；“约 2×”是特定配置/工作负载的目标或比较，不能推成所有模型和并发都翻倍。文章还报告 CS-4 rack 约 125–135 kW、CS-3 单系统约 23 kW，但基准不同，不能直接计算 performance/W。SRAM 容量不增加意味着模型权重、KV cache 和长上下文仍是主要边界。
+
+---
+
+## Slide 82｜CS-4 I/O 与 disaggregated inference：把容量边界外移
+
+屏幕正文：
+
+```text
+WSE/SRAM → proprietary wafer I/O → FPGA-based WIO/NIC
+       ├─ Ethernet fat-tree（报道约 3 μs switched path）
+       ├─ direct wafer path（报道约 2 μs）
+       └─ HBM-based XPU / Trainium / other system
+
+PDD：prefill ↔ decode     AFD：attention ↔ feed-forward
+```
+
+讲师说明：这些 2–3 μs 和 2.4 Tb/s 是文章报告的特定系统数字。[C3] PDD 把 prefill 与 decode 分开，AFD 进一步按 attention/feed-forward 拆分；外部 HBM 可以缓解 wafer SRAM 容量限制，但新增 network hop、序列化、流控、一致性和故障处理。固定的 P:D 资源比例也可能跟不上五年生命周期内 workload 变化。MoE 的 EP/ETP 对 token dispatch/combine 的跳数、尾延迟和 expert skew 敏感；“支持 disaggregation”不等于所有并行策略同样有效。文章关于 AWS/Trainium 特定合作方向属于推测，不能讲成互操作承诺。
+
+---
+
+## Slide 83｜Groq：用静态、空间化的数据流换可预测性
+
+屏幕正文：
+
+```text
+compiler/static schedule
+        ↓
+spatial dataflow + distributed local SRAM
+        ↓
+可预测的 cycle、带宽与资源占用
+
+边界：容量、动态请求、长上下文、MoE 路由、外部网络
+```
+
+讲师说明：本页只讲设计空间，不声称掌握 Groq 未公开的完整微架构。公开材料支持的稳妥表述是 compiler-managed/static scheduling、spatial dataflow 和 SRAM-centric local memory；不能由二手材料反推出所有执行都 cycle-level deterministic、确切功耗或 3D stacking。[C4] 静态调度可减少动态仲裁和 timing variance，但不会消除热设计、容量和网络边界。Cerebras wafer-scale 与 Groq 空间化数据流是相近问题下的不同设计点，不是同一架构。
+
+---
+
+## Slide 84｜HBF、PNM、3D stacking、低延迟互联：四条研究路线
+
+屏幕正文：
+
+```text
+HBF                  冷权重/冷 context 容量
+PNM                  逻辑靠近内存，减少 movement
+3D memory–logic      带宽密度与能效
+低延迟互联           小消息与同步边
+
+研究方向 ≠ 成熟采购清单
+```
+
+讲师说明：HBF 的页粒度、读延迟、写寿命和写放大使它不适合默认承载热 KV。PNM 与 PIM 要区分：PNM 通常把逻辑和内存放在不同但相邻的 die，可能改善逻辑 PPA、内存密度和软件分片粒度；这不代表 PNM 在所有工艺、封装和热预算下都胜出。3D stacking 带来散热、良率、封装、接口标准与供应链约束。低延迟互联能缩短通信边，但不会自动增加容量或消除 KV 写入问题。[A43]
+
+---
+
+## Slide 85｜NetDAM：把内存和可编程处理放到网络边缘
+
+屏幕正文：
+
+```text
+GPU/XPU ── scale-up / Ethernet ── [NetDAM]
+                                  ├─ SRAM/HBM
+                                  ├─ vector/reduce engine
+                                  └─ programmable memory operations
+
+不是透明共享内存，也不是免费的一致性域
+```
+
+讲师说明：NetDAM 是 2021 年 FPGA/100GE 研究原型，论文延迟和 jitter 只能作为当时实验平台的证据，不能线性外推到今天的 1 Tb/s 量产系统。[A39] 关键问题是 ownership、capability、ordering、completion、backpressure、partial failure 和 recovery。MoE dispatch/combine 还要保存 token、expert、sequence 和归约状态；这些 metadata 可能比算术更难。把操作编码到 packet/header 也必须回答重放、重复执行、未知结果和安全隔离。因此 NetDAM 是可复用的架构原型，不是透明远端 RAM。
+
+---
+
+## Slide 86｜架构选择矩阵：没有脱离 workload 的“赢家”
+
+屏幕正文：
+
+```text
+GPU + HBM          通用性、动态 batching       容量/带宽/功耗压力
+wafer-scale SRAM   低 batch decode             容量与跨 wafer 通信
+Groq-style dataflow 可预测时序与资源占用     动态性、容量、生态
+HBF/池化存储       冷权重、冷 context          页延迟、寿命、搬运
+PNM/NetDAM         就地操作、减少 movement     状态、编程、安全、故障
+低延迟 fabric      小消息与同步边             不能替代内存层次
+```
+
+讲师说明：比较时固定模型结构、输入/输出长度、并发与 batch、并行策略（PP/TP/EP/AFD/PDD）以及 TTFT/TPOT/吞吐/尾延迟/能耗目标，再画出通信 critical path、KV 热度和复制/恢复策略。一个系统可以在 tokens/s/user 上赢，却在容量、利用率、容错或多年 TCO 上输。结论应是“给定 workload 和故障模型下的选择”，不是某种芯片永远更快。[A43][C3][C4]
+
+---
+
+## Slide 87｜把 100K 训练与推理硬件放回同一张账本
+
+屏幕正文：
+
+```text
+删除 bytes → 改变落点/路径 → 减少同步 → 提高利用率
+       │
+       ├─ CCLX：删除初始化与无效 resource footprint
+       ├─ DQPLB：控制 burst 与 in-flight state
+       ├─ CS-4/Groq：改变 memory/compute/package 边界
+       └─ HBF/PNM/NetDAM：改变数据所在位置与处理位置
+```
+
+讲师说明：这些案例的共同方法是先问“这批 bytes 是否必须在 critical path 上出现”。CCLX 把控制面和资源分配移出启动关键路径；DQPLB 把零拷贝的 burst 约束到 BDP 预算；Cerebras/Groq 改变片上 memory、调度和封装的边界；HBF、PNM、NetDAM 则改变容量、处理和通信的落点。每项优化都要重新计算 compute、metadata、buffer、staleness、failure 和 thermal cost。只有 consumer-visible time 与 tail 真正改善，才算成功。
+
+---
+
+# 总结（186–188 min）
+
+## Slide 88｜离场前，用一次 x[i] 检查自己是否真的理解
 
 ```text
 1 dependency：为什么 B 必须等 x[i]？能否改依赖或分 chunk？
@@ -1587,7 +1856,7 @@ UET: standardized wire-level transport and endpoint semantics
 
 ## Backup Slide MRC1｜MRC 一次路径故障的事件时间线
 
-这张备份页用于答疑，不计入 72 页主讲编号：
+这张备份页用于答疑，不计入 88 页主讲编号：
 
 ```text
 t0  chunk 被拆成 packet/placement units
@@ -1734,6 +2003,8 @@ dense QKᵀ scores in TMEM
 - [A39] Fang and Peng, *NetDAM: Network Direct Attached Memory with Programmable In-Memory Computing ISA*, arXiv:2110.14902, 2021: https://arxiv.org/abs/2110.14902
 - [A40] Zhou et al., *UCCL-Tran: An Extensible Software Transport Layer for GPU Networking*, OSDI 2026, pp. 1143–1166: https://www.usenix.org/conference/osdi26/presentation/zhou-yang ; public preprint arXiv:2504.17307v2: https://arxiv.org/abs/2504.17307v2
 - [A41] Jiang et al., *Orderlock: A New Type of Deadlock and its Implications on High Performance Network Protocol Design*, SIGCOMM 2025, pp. 575–591, DOI 10.1145/3718958.3750497: https://doi.org/10.1145/3718958.3750497
+- [A43] Xiaoyu Ma et al., *Challenges and Research Directions for Large Language Model Inference Hardware*, arXiv:2601.05047: https://arxiv.org/abs/2601.05047
+- [A44] Hongyi Zeng et al., *Connecting 100K+ GPUs: Building the Communication Stack for Large-Scale LLM Training*, ACM SIGCOMM 2026, pp. 505–518, DOI 10.1145/3789240.3829152: https://doi.org/10.1145/3789240.3829152. The local user-provided PDF reports Meta production deployment and experiment-specific results.
 - [B1] NVIDIA NCCL Extensions / NCCL EP, commit `9f47d6eb3b60962d8157a579b4caaaa4ae6b19f4`: https://github.com/NVIDIA/nccl-extensions/tree/9f47d6eb3b60962d8157a579b4caaaa4ae6b19f4
 - [B2] Mooncake repository, commit `51e594d3a21660bdf2f6f1f11ec544b7cfb06932`: https://github.com/kvcache-ai/Mooncake/tree/51e594d3a21660bdf2f6f1f11ec544b7cfb06932
 - [B3] DeepEP repository, commit `01dc3aaac82068020353dce2c302e38153c0bfaa`: https://github.com/deepseek-ai/DeepEP/tree/01dc3aaac82068020353dce2c302e38153c0bfaa
@@ -1750,15 +2021,20 @@ dense QKᵀ scores in TMEM
 - [B14] ByteDance FLUX, a communication-overlapping library for tensor/expert parallelism, commit `19831ca2d820e3e782ed1d15d8b52d0898b78b26`: https://github.com/bytedance/flux/tree/19831ca2d820e3e782ed1d15d8b52d0898b78b26
 - [B15] NVIDIA CUTLASS distributed GEMM examples, commit `dcf215af68a2d08d305076c152a06f201728cd53`: https://github.com/NVIDIA/cutlass/tree/dcf215af68a2d08d305076c152a06f201728cd53/examples/65_distributed_gemm
 - [B16] UCCL repository, commit `d94b5bf2e45bd21c40ccd10163453e91fd9d30c8`; current project scope includes UCCL-Tran, UCCL-P2P and UCCL-EP: https://github.com/uccl-project/uccl/tree/d94b5bf2e45bd21c40ccd10163453e91fd9d30c8
+- [C3] SemiAnalysis, *Cerebras's Next Generation CS-4: Fast Just Got Faster*, Myron Xie et al., 2026-08-19. User-provided excerpt from a paid secondary analysis; no stable public URL supplied.
+- [C4] Public Groq architecture/product materials and user-provided zartbot commentary. Used only for the high-level compiler/static-scheduling, spatial-dataflow and SRAM-centric design-space description; unpublished microarchitecture and quantitative claims are intentionally excluded.
 
 ---
 
 # 特别鸣谢
 
-特别感谢微信公众号 **zartbot** 长期整理并分享 GPU 多 Die、缓存一致性、RDMA、Scale-Up/Scale-Out 与可靠传输相关资料。本文在确定问题脉络和扩展阅读范围时重点参考了以下文章（微信公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-18）：
+特别感谢微信公众号 **zartbot** 长期整理并分享 GPU 多 Die、缓存一致性、RDMA、Scale-Up/Scale-Out 与可靠传输相关资料。本文在确定问题脉络和扩展阅读范围时重点参考了以下文章（微信公众号文章未找到稳定公开永久链接，按标题与来源记录，访问日期 2026-08-21）：
 
 - 《英伟达 GB200 架构解析 4：BlackWell 多 die 和 Cache 一致性相关的分析》
 - 《谈谈 RDMA 和 ScaleUP 的可靠传输》
 - 《“漫”谈 RDMA 现代化》及《谈谈 OpenAI 发布的 MRC》
+- 《大语言模型推理硬件的挑战与研究方向》
+- SemiAnalysis, *Cerebras's Next Generation CS-4: Fast Just Got Faster*（用户提供的付费文章摘录）
+- 《Connecting 100K+ GPUs: Building the Communication Stack for Large-Scale LLM Training》（用户提供的 SIGCOMM 2026 PDF）
 
 后两篇 RDMA 文章按科普/评论性二手阅读使用：吸收其问题意识和教学比喻，不把其中的厂商自报数字、竞争性评价或未限定结论作为科学证据。具体产品事实、协议字段和量化数字仍尽量回溯至上列官方文档、标准、论文和固定版本的开源仓库。文中若有疏漏，由本稿作者负责。
