@@ -1563,11 +1563,13 @@ Flash/HBF：大容量/页读取/写寿命约束
 ```text
 用户提供的 SemiAnalysis 二手整理：
   WSE-3：约 44 GB 片上 SRAM/wafer（容量不变）
+  约 43 PB/s 聚合片上 SRAM bandwidth（口径不可与 HBM 直接比较）
   更高时钟与供电/液冷，目标约 2× 性能
+  机架从 2 个 wafer-scale engine 增至 3 个 backpack
   约 2.4 Tb/s off-wafer I/O（报道口径）
 ```
 
-讲师说明：本页数字来自用户提供的 SemiAnalysis 付费文章摘录和公开披露的二手整理，不是完整产品规范。[C3] “约 44 GB”是每片 wafer 的 SRAM 容量，不是外部内存；“约 2×”是特定配置/工作负载的目标或比较，不能推成所有模型和并发都翻倍。文章还报告 CS-4 rack 约 125–135 kW、CS-3 单系统约 23 kW，但基准不同，不能直接计算 performance/W。SRAM 容量不增加意味着模型权重、KV cache 和长上下文仍是主要边界。
+讲师说明：本页数字来自用户提供的 SemiAnalysis 付费文章摘录和公开披露的二手整理，不是完整产品规范。[C3] “约 44 GB”是每片 wafer 的 SRAM 容量，不是外部内存；“43 PB/s”是聚合片上带宽，访问粒度、数据复用和边界不同，不能与 Rubin/HBM 的外部带宽做同口径比较；“约 2×”是特定配置/工作负载的目标或比较，不能推成所有模型和并发都翻倍。文章还报告 CS-4 rack 约 125–135 kW、CS-3 单系统约 23 kW，但基准不同，不能直接计算 performance/W。SRAM 容量不增加意味着模型权重、KV cache 和长上下文仍是主要边界。
 
 ---
 
