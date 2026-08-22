@@ -361,29 +361,42 @@ GPU B endpoint places x[i] into GPU B memory
 consumer kernel may read x[i]
 ```
 
-讲师说明：如果 A、B 在同一个 scale-up domain，payload 可能完全不经过 CPU、PCIe 或以太网交换机。逐步看：A 的 producer 先把 32 KiB chunk 写完；某个 GPU warp、copy/collective engine 或 endpoint 获得 ready 条件；source endpoint 从 HBM/L2/SMEM 对应路径取数；fabric 仲裁；B endpoint 把 bytes 写入目标位置；completion/fence 最后释放 B 的 consumer。调用 NCCL 或 device `put` 的程序员通常只看见首尾，中间 endpoint queue、fabric credit、arbitration、remote HBM write 与 signal 都是透明层。
+讲师说明：如果 A、B 位于同一个带专用 scale-up fabric 的 domain，通信库可能选择 NVLink、xGMI、HCCS 等 peer path，payload 不必经过 host CPU/CPU DRAM、外部 RNIC 或 Ethernet/InfiniBand switch；是否经过 PCIe 仍取决于具体 GPU、桥接器和拓扑，不能一概而论。逐步看：A 的 producer 先把 32 KiB chunk 写完；某个 GPU warp、copy/collective engine 或 endpoint 获得 ready 条件；source endpoint 从 HBM/L2/SMEM 对应路径取数；fabric 仲裁；B endpoint 把 bytes 写入目标位置；completion/fence 最后释放 B 的 consumer。对调用 NCCL 或 device `put` 的程序员来说，中间的 endpoint queue、fabric credit、arbitration、peer HBM write 与 signal 通常都是透明层。
 
 瓶颈因而不叫“网卡线速”，而可能是 source HBM read、endpoint injection、共享 fabric edge、destination HBM write 或 completion wait。症状分别可能是 producer 后长 gap、fabric link 不满、某一 edge 饱和、B 侧 memory busy 或数据已到但 kernel 仍在 poll。证据应组合 NVLink/xGMI/HCCS counters、per-link bytes/stall、HBM throughput 和 GPU timeline。[A1][A3][A4]
 
-## Slide 10｜GPU A → GPU B 的第二条路径：通用 I/O fabric
+如果服务器没有可用的节点内专用 fabric，或者通信目标位于另一台服务器，数据就可能转入通用 I/O 路径：同一节点内可以是 PCIe P2P，跨节点则常见的是 GPUDirect RDMA。此时必须先把实际拓扑画出来，再判断哪些边界真的经过。
+
+## Slide 10｜GPU A → GPU B 的第二条路径：通用 I/O / scale-out fabric
 
 屏幕正文：
 
 ```text
-CPU/control: register buffer → build/post WQE → poll CQE
+common host-driven control:
+  setup: register memory region (often amortized)
+  per operation: build/post WQE → poll CQE
 
-payload:
-GPU A HBM → RNIC DMA read → PCIe egress
+same-node PCIe P2P variant:
+  GPU A HBM → PCIe switch / root complex → GPU B HBM
+
+cross-node GPUDirect RDMA (when peer DMA is supported):
+GPU A HBM → GPU–RNIC I/O link (often PCIe)
+           → RNIC DMA read / packet engine
            → packetization / transport / Ethernet or IB switches
-           → remote RNIC → PCIe DMA write → GPU B HBM
+           → remote RNIC → remote GPU–RNIC I/O link
+           → PCIe DMA write → GPU B HBM
 
-completion: transport ACK/CQE/flag → GPU B acquire/fence → consume
+completion/publication (semantics vary):
+  sender CQE / transport ACK / explicit remote signal
+    → required consumer-side ordering/acquire → consume
 ```
 
-讲师说明：这条路径通常使用 GPUDirect RDMA 或同类 peer DMA。CPU 可能完成初始化、内存注册、WQE post 和 CQ polling，但 steady-state payload 可以从 GPU HBM 被 RNIC DMA 读取，经 PCIe、网络和远端 PCIe 直接写入 B 的 HBM，不必先进入 CPU DRAM。这里至少串联了 source HBM、GPU–NIC PCIe、RNIC DMA/packet engine、网络瓶颈、remote RNIC 和 destination HBM 六个服务站。
+讲师说明：这页描述的是两种常见的通用 I/O 变体，而不是说所有 GPU-to-GPU 通信都使用 RDMA。若同一节点没有专用 GPU fabric，GPU P2P 可能经 PCIe switch 或 root complex 完成；若目标在另一台服务器且平台支持 peer DMA，则可使用 GPUDirect RDMA：RNIC 直接读取已注册的 GPU memory，并把 payload 写入远端 GPU memory，数据路径不必经过 CPU DRAM。CPU 仍可能在常见的 host-driven 实现中负责 memory-region 注册、WQE 提交和 CQ 轮询；这些 control/progress 工作也可能由 GPU 或 NIC/DPU offload，且 memory registration 通常是可摊销的 setup，而不是每个 chunk 都重复执行。
 
-以端口 400 Gb/s 为例，wire 上限约 50 GB/s；若 GPU→NIC 实测 DMA 只有 35 GB/s，交换网络再快也无法提高端到端 payload。反过来，DMA 能到线速而 flow hash 撞在同一 uplink，瓶颈位于网络。若 payload 已写入 B 但 remote flag/CQE 到得晚，链路 counter 会很好看，consumer 仍会空等。最容易犯的错误是把“GPU 与 NIC 都在一台服务器”误认为一定是同一 PCIe switch 或最短 NUMA 路径；需用
-vidia-smi topo -m`、PCIe 拓扑、NUMA 绑定、DMA microbenchmark 和 NIC counters共同确认。
+分析跨节点路径时，应把 source/destination HBM、两端 GPU–RNIC I/O link、RNIC DMA/packet engine、交换网络队列和两端 completion/publication 看成不同的资源域，而不是固定的“六个服务站”。peer-DMA、IOMMU、PCIe bridge 或 NUMA 条件不满足时，runtime 可能退回 Slide 11 的 host-memory staging。
+
+以单端口 400 Gb/s 为例，原始线速约为每方向 50 GB/s，实际 payload 还要扣除编码、FEC、协议头和其他链路开销；若 GPU→RNIC 的有效 DMA 只有 35 GB/s，交换网络再快也无法提高端到端 payload。反过来，DMA 已接近线速而 flow hash 撞在同一 uplink，瓶颈就位于网络。若 payload 已写入 B，但 B 所需的 remote signal、ordering 或 acquire 条件到得晚，链路 counter 仍可能很好看，consumer 却继续空等。最容易犯的错误是把“GPU 与 NIC 在同一台服务器”误认为一定共享同一个 PCIe switch 或最短 NUMA 路径；应使用
+`nvidia-smi topo -m`、PCIe 拓扑、GPU–NIC affinity、NUMA 绑定、DMA microbenchmark 和 NIC/link counters 共同确认实际路径。
 
 ## Slide 11｜GPU A → GPU B 的第三条路径：经过 CPU/host memory 的 fallback
 
