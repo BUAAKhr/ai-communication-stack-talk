@@ -27,11 +27,11 @@
 ## 内容
 
 - 88 页主讲内容，独立讲授约 186 分钟；紧接前序演讲时建议压缩为约 170–180 分钟。
-- 一个统一的端到端性能模型：source readiness、launch/progress、staging、queueing、serialization、placement、completion、consumer wait、recovery 与 overlap。
-- 一张 13 层透明性阶梯，用来定位 `all_reduce()`、P2P、MoE dispatch、distributed kernel 和 KV movement 下方的隐藏工作。
+- 一个统一的端到端分析框架：Topic 1 先定义 Delivery、Placement、Completion、Visibility、Ordering 与 buffer lifetime；Topic 5 再用 source readiness、launch/progress、staging、queueing、serialization、consumer wait、recovery 与 overlap 判断哪些成本进入关键路径。
+- 一张透明性阶梯，用来定位 `all_reduce()`、P2P、MoE dispatch、distributed kernel 和 KV movement 下方的隐藏工作；“13 层”是教学分层，不是标准网络模型。
 - 一张 API 入口到隐藏层次的映射：PyTorch collective、NCCL、RDMA verbs 与 device-side put/store 分别站在哪一层之上。
 - 三条可逐事件跟踪的数据路径：scale-up fabric、GPUDirect/RNIC/PCIe，以及 host-memory staging fallback。
-- 一套固定取证方法：依赖与 bytes、物理位置、五类执行角色、四条逻辑路径、服务率与队列、timeline/counter/P99。
+- 一套固定取证方法：依赖与 bytes、物理位置、五类执行角色、三类逻辑角色与 recovery 闭环、服务率与队列、timeline/counter/P99。
 - AI server 内的 PCIe、NVLink/NVSwitch、xGMI、HCCS 与 NUMA。
 - Blackwell 双 Die 的官方事实，以及不能从 MCM-GPU 论文反推的产品细节。
 - Scale-Up 与 Scale-Out 的语义、RTT、故障域和可靠性状态。

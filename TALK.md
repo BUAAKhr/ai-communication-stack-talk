@@ -58,7 +58,7 @@ GPU B 的下一步计算必须等到该 chunk 可以安全消费
 听众在结束时应该能独立完成四件事：
 
 1. 从一个 `all_reduce()`、`send()`、MoE dispatch 或 KV transfer 调用，画出数据真正经过的硬件路径。
-2. 区分“payload 已到达”“写入了目标地址”“操作已完成”“消费者现在可见”这四个不同事件。
+2. 区分 Delivery、Placement、Completion、Visibility 和 Ordering 五类 readiness evidence，并检查 source/destination buffer 的 ownership/lifetime。
 3. 把慢归因到 source readiness、launch/progress、memory movement、queueing、serialization、path、completion、imbalance 或 recovery，而不是笼统地说“网络慢”。
 4. 指出调用者站在多少层抽象之上，以及每层虽然透明但仍付出了什么状态、带宽、延迟和芯片面积。
 
@@ -96,7 +96,7 @@ consumer synchronization and recovery
 建议用约 90–120 秒完成这个承接：
 
 - 前序第 15–42 页已经展开 credit/replay、lossless/lossy、HOL/VC、因果依赖、Orderlock 与 InfiniBand；本场在 Slide 22–25 压缩回忆，在 Slide 26–33 把这些机制放入 multipath、direct placement、SACK/retry、拥塞控制与状态放置的 AI case。
-- 前序第 43–50 页用 Domain、NVL72、同步类比和 SQ/CQ 生命周期说明“设备背后存在状态与异步 progress”；本场把它翻译成一个 GPU A→GPU B 的逐事件路径，并明确 MMIO doorbell、DMA、transport ACK、CQE、remote visibility 和 consumer synchronization 不是同一事件。
+- 前序第 43–50 页用 Domain、NVL72、同步类比和 SQ/CQ 生命周期说明“设备背后存在状态与异步 progress”；本场在 Topic 1 把它翻译成一个 GPU A→GPU B 的 readiness contract，并明确 MMIO doorbell、DMA、transport ACK、CQE、remote visibility 和 consumer synchronization 不是同一事件。
 - 前序第 52–59 页已经给出 Ethernet/IP/ARP/TCP 的基础层次，p.64–78 又提出网络分层与 Tile/Unified System；本场不再泛讲协议栈，而是把 connection/tunnel/path、bounded transaction、fence、tile，以及 UET、Falcon、MRC、UCCL、TMA、NVSHMEM、TileLink、distributed GEMM 与 MegaMoE 放入可观测的数据路径，讲清各自实际边界。
 
 这里有一个重要口径：`Software Connection`、`Reliable Tunnel`、`Physical Path`、`DMA Context`、`Bounded Transaction`、`Local Retirement`、`Send/Execute Fence` 等仍是前序讲者的架构词汇，不是行业通用标准对象；新版虽已初步展示相关分层和 Tile 操作，也不能把它们直接等同为 RDMA QP/RC、UET PDC/CCC、Falcon connection、UCCL connection/chunk 或 GEMM tile。Tile Load/Store 在前序中是设计语言，本场会把它连接到已公开的 device/runtime 机制，并说明 queue、backpressure、replay、protection 和 completion state 仍然存在。
@@ -129,7 +129,7 @@ consumer synchronization and recovery
 
 # 1. 什么才叫“可消费”？（0–17 min）
 
-> 本章只定义“可消费”的终点和证据类型；Slide 5–7 只用吞吐、同步和 workload pattern 建立时间坐标，详细的 traffic、progress 与 wait-for graph 留到 Topic 4.
+> 本章只回答一个语义问题：`x[i]` 在哪些条件都成立时，GPU B 才能安全消费？从 Slide 3 到 Slide 7 依次拆开 Delivery、Placement、Completion、Visibility 和 Ordering；它们是五类证据，不是五个必然串行的 wire stage。
 
 
 ## Slide 1｜先说清楚：这场课结束时你要能画出什么
@@ -147,7 +147,7 @@ GPU A ── Tensor Chunk ──?──> GPU B / consumer kernel
 2. GPU B 凭什么判断“现在可以消费”？
 ```
 
-讲师说明：先不要记厂商、协议或缩写。我们要建立的是一个可迁移的观察方法：任何通信操作都可以从“数据在哪里、谁推动它、何时可见、出了问题谁恢复”四个角度拆开。后面看到 NCCL、RDMA、UET、TMA 或 MegaMoE，都把它们放回这条路径，而不是把它们当成互不相干的产品名。
+讲师说明：先不要记厂商、协议或缩写。我们先建立一个 readiness contract：B 不是因为“收到一个消息”就能消费，而是因为一组可验证的条件已经成立。后面看到 NCCL、RDMA、UET、TMA 或 MegaMoE，都把它们放回这条 contract，而不是把它们当成互不相干的产品名。
 
 建议图示：左侧一个 API，右侧一个消费者 kernel，中间留出一条逐层展开的路径；只标出“调用者看到的”和“硬件实际做的”。
 
@@ -156,155 +156,186 @@ GPU A ── Tensor Chunk ──?──> GPU B / consumer kernel
 屏幕正文：
 
 ```text
-GPU A / HBM                         GPU B / HBM
-  x[i] 已产生 ──?──> 目标 buffer       K_B 等待 x[i]
+GPU A / HBM                         GPU B / target buffer
+  producer 写出 x[i] ──?──> 目标区域       K_B 依赖 x[i]
+
+payload role:       搬运真正被消费的 bytes
+control / metadata: identity、address、sequence、credit、ACK/NACK、error
+completion / publish: CQE、counter、fence、event 或 ready signal
+lifetime:           source 与 destination buffer 何时可以复用
 
 CanConsume(B, x[i]) requires evidence for:
 Delivery ∧ Placement ∧ Completion ∧ Visibility ∧ Ordering
 ```
 
-讲师说明：假设 GPU A 在 HBM 中产生了一个 32 KiB chunk，GPU B 的下一个 tile 依赖它。`Delivery` 问必要的 packet/fragment 是否到达；`Placement` 问 bytes 是否写入正确 offset；`Completion` 问哪一个 operation 的义务已经结束；`Visibility` 问目标 GPU 的 memory system 与 consumer 是否已经能观察到写入；`Ordering` 问其他 payload、signal、fence 与 consumer launch 之间的先后约束是否成立。这五项是分析“可消费资格”的证据类别，不是所有协议都严格串行执行的五个 wire stage。
+讲师说明：假设 GPU A 在 HBM 中产生了一个 32 KiB chunk，GPU B 的下一个 tile 依赖它。五项分别问：必要的 bytes/fragment 是否到达规定的接收端（`Delivery`）；是否写入正确的目标地址、offset 和 generation（`Placement`）；哪一项传输或发布义务已经结束（`Completion`）；B 的 memory system 和 consumer 是否能在所需 scope 下观察到写入（`Visibility`）；payload、signal、fence 和 consumer launch 之间需要的 happens-before 是否成立（`Ordering`）。它们是分析“可消费资格”的证据类别，不是所有协议都严格串行执行的五个 wire stage。
 
-这里尤其要分开 sender-side completion 与 remote consumability：本地 CQE 可能只允许 A 复用 source buffer，不必然证明 B 的 kernel 已经 acquire 到目标数据。我们把 payload、控制信息和完成通知分开画：payload 负责搬 bytes，控制路径负责序号、credit、ACK、counter、fence 或 error。任何一条路径停住，B 都可能表现为“算力没有跑满”。
+`Buffer ownership/lifetime` 是横向的安全前提：即使五类证据已经满足，如果 A 已经过早复用 source buffer，或者 B 的 target slot 已经被下一轮覆盖，B 仍不能安全消费。这里的三类角色不是三条必然独立的物理路径：控制信息可能与 payload 一起传输，completion 也可能 piggyback 在控制消息上，或者由同一个 endpoint 直接产生。需要分别追问的是：bytes 是否搬到位，控制/metadata 是否使它能被正确解释和推进，以及相应层次的 completion/publication 是否已经发布。对 B 的 readiness contract 来说，只要其中一类必要工作没有完成，consumer 就可能继续等待，表现为 kernel 未启动、polling 或 pipeline bubble；与 B 无关的 source-side ACK 延迟则不一定阻塞 B。
 
 本页的数值只是教学单位，不是某个协议规定的最佳 chunk。真实大小由算子 tile、memory layout、NIC offload、MTU、拥塞窗口和接收端 buffer 一起决定。
 
-## Slide 3｜一个 API 调用下面，至少藏着十三层工作
+## Slide 3｜Delivery：必要的 bytes 到达规定的接收端
 
 屏幕正文：
 
 ```text
-0  workload dependency       为什么 B 需要这批数据
-1  framework / strategy      rank、group、并行维度
-2  collective / P2P API      语义：reduce、send、get、put
-3  algorithm / schedule      ring、tree、chunk、channel
-4  kernel / progress         谁 post、谁 poll、谁发 signal
-5  source memory             readiness、layout、staging
-6  device API / DMA          registration、WQE、doorbell、DMA
-7  transport                 ordering、CC、ACK、retry
-8  topology / path           NIC、switch、ECMP、多平面
-9  queue / serialization     credit、排队、线速发送
-10 link protection          FEC、CRC、replay、flow control
-11 destination placement    address、offset、reorder、commit
-12 consumer / recovery      fence、timeout、重试、上层恢复
+Delivery 问的是：
+必要的 packet / fragment 是否到达
+协议定义的接收端点？
+
+需要识别：
+  message / chunk identity
+  sequence / offset / length
+  integrity 与 duplicate handling
+  gap / loss 是否已被处理（若协议允许乱序或重传）
+
+到达接收端 ≠ 已写入目标 buffer
+到达接收端 ≠ consumer 已经可以读
 ```
 
-讲师说明：这张表是整场的“坐标系”。例如 `all_reduce(tensor)` 看起来站在第 2 层，但它会间接触发第 3 层的环或树、第 4 层的 CUDA kernel、第 6 层的 DMA、第 7 层的可靠传输和第 10 层的链路重放。所谓透明，是库或硬件替我们管理了状态；这些状态仍会占用 CPU/GPU 指令、片上 SRAM、主机内存、PCIe 带宽和等待时间。讲任何优化时，都先指出它改变了哪一层、把成本移到了哪一层。
+讲师说明：先限定“到达”的观察点。它可以是 remote RNIC 收到并验证了 fragment，也可以是 scale-up endpoint 接收了一个 transaction；不能在没有协议定义的情况下把它直接说成“已经到达 GPU HBM”。Delivery 需要 message identity、offset、length、完整性和 gap/duplicate 状态，接收端可能允许乱序到达，但必须能判断哪些片段仍缺失。
 
-## Slide 4｜把“通信延迟”拆成可以定位的事件
+可靠传输中的 ACK、receive completion 或后续 transport state 可以证明某一层的 delivery obligation；它们不自动证明 payload 已经完成目标写入，更不自动证明 B 的 kernel 已经 acquire 到数据。这个区分会贯穿后面所有 RC、MRC、Falcon、UCCL 和 UET 的比较。
+
+## Slide 4｜Placement：bytes 位于正确的目标位置
 
 屏幕正文：
 
 ```text
-T_visible =
-  T_source_ready       等生产者写完/布局准备
-+ T_launch_progress    launch、post、poll、doorbell
-+ T_stage_copy         staging、pack、registration、DMA setup
-+ T_queue               endpoint / NIC / switch 排队
-+ T_serialize           bytes ÷ 有效链路速率
-+ T_propagate           线缆、交换跳数、PHY/FEC
-+ T_place               乱序重组、目标写入、cache/memory commit
-+ T_complete            ACK、counter、CQE、fence
-+ T_consumer_wait       消费者真正能观察到数据
-+ T_recovery            丢包、重放、超时、重路由
-- T_hidden_overlap      被计算或其他 chunk 隐藏的部分
+Placement 问的是：
+bytes 是否已经写入正确的
+address / offset / generation？
+
+必须成立：
+  address translation / protection
+  range 与 length 检查
+  fragment coverage / hole tracking（若发生分片或乱序）
+  destination buffer ownership
+
+在协议允许乱序时，direct placement 可以允许乱序写入，
+但不能允许错误位置或错误 generation。
 ```
 
-```text
-32 KiB ÷ 50 GB/s ≈ 0.66 μs，只是理想 serialization
-若 producer→consumer 实测 6 μs，多出的 5.34 μs 必须在其余事件中找。
-```
+讲师说明：Placement 比“收到 bytes”更强。目标可能是远端 HBM、host staging buffer、片上 scratchpad 或一个由 runtime 管理的 slot；必须明确最终 consumer 读取的地址域。在支持分片乱序放置的协议中，可以按 fragment offset 直接写入，不要求 payload 按网络到达顺序到齐；此时接收端还要维护 hole/bitmap、长度和 generation，避免迟到的上一轮数据污染当前 buffer。顺序传输则可能不需要这些额外的 reorder state。
 
-讲师说明：这个式子不是精确的排队模型，而是排查顺序。假设 400 Gb/s 端口有效速率先粗略按 50 GB/s 算，32 KiB 在一条已准备好的空链路上序列化约 0.66 μs；真实路径还要等待 producer ready、launch/post、GPU→NIC DMA、队列、交换跳数、目标写入、completion 和 consumer acquire。测到 6 μs 时，不能把全部 6 μs 都叫“网卡延迟”。
+DMA 已经写入一个目标地址，不等于整个 logical chunk 已经完整放置；一个 message 也可能经过 staging、reorder 或分片提交。证据应包括目标写入范围、fragment completion、reorder state 和 buffer lifetime，而不是只看 sender-side CQE。
 
-逐段做时间戳：producer event→WQE post 是 launch/progress；post→first packet/DMA 是 source/NIC；first→last byte 是 queue+wire；last byte→ready signal 是 placement/completion；ready→consumer start 是 scheduling/ordering。空载 ping 很短也不能证明高负载时短，因为 `T_queue` 和 `T_recovery` 只在压力下出现。后面每一节都把其中一项具体化，并给出可观察证据。
-
-## Slide 5｜吞吐不是一条链路的数字，而是最慢资源的下界
+## Slide 5｜Completion：必须说明“哪一个义务结束了”
 
 屏幕正文：
 
 ```text
-effective throughput ≤ min(
-  producer rate,
-  source-memory bandwidth,
-  local fabric / PCIe rate,
-  NIC + transport rate,
-  fabric bottleneck rate,
-  destination-memory bandwidth,
-  consumer / reduction rate
-)
+Completion 不是一个全局事件。
+
+可能分别表示：
+  sender：source buffer 可以复用
+  transport：delivery / retry 义务结束
+  endpoint：本层 DMA / write obligation 已结束
+  runtime：ready signal / counter 已发布
+  consumer：已满足 acquire 条件并开始使用（readiness endpoint）
+
+每个 CQE / ACK / counter / event
+都必须问：它覆盖哪一层？
 ```
 
-```text
-例：producer 80 GB/s，GPU→NIC 38 GB/s，wire 50 GB/s，
-    destination placement 45 GB/s，consumer 32 GB/s
-    → 端到端 steady-state 不会超过 32 GB/s。
-```
+讲师说明：Completion 是最容易被一句“通信完成了”掩盖的词。发送方 CQE 可能只表示本地 WQE 已由 RNIC 处理，足以解除 source-data obligation；transport ACK 可能只表示对端接受了协议层义务；remote write completion、runtime signal 和 consumer acquire 又是不同层次。具体 API 的语义必须以它的规范和 memory-ordering 定义为准，不能把一个本地 completion 反推成远端 kernel 已执行。
 
-讲师说明：吞吐像串联的服务站。即使端口可发 50 GB/s，source pack/DMA 只有 38 GB/s，就不可能向网络持续注入 50；即使前面都更快，consumer reduction 只有 32 GB/s，destination queue 最终会增长并反压上游。协议/FEC/header 还会使 payload rate 低于 raw line rate，多卡 collective 又会共享 PCIe switch、uplink、HBM 或 reduction engine。
+还要区分 definite success、definite rejection 和 unknown failure。超时只是本地观察到等待超限，不自动证明远端没有执行；如果 buffer 要复用或重试，必须知道当前 completion/ownership 到底覆盖了什么。
 
-上层常见症状有三类：链路未满且 source side 忙，说明生产/DMA 限速；链路满且 queue 平稳，说明接近 wire bottleneck；destination queue/credit stall 上升而 sender 变慢，说明接收/消费限速。证据要对齐 producer kernel rate、HBM/PCIe、NIC TX/RX、per-link queue 和 consumer rate。“每张卡一个 400G NIC”不等于每张卡都能得到 400G payload。
-
-## Slide 6｜同步作业看的是最慢的依赖，不是平均值
+## Slide 6｜Visibility：目标写入对 consumer 真正可观察
 
 屏幕正文：
 
 ```text
-T_step = max over required ranks / chunks (
-  compute + communication + wait
-) after overlap
+Visibility 问的是：
+consumer 的 memory access
+能否在规定 scope 下观察到 payload？
 
-平均带宽高 ≠ step time 低
-一个热点 expert / 慢路径就能决定整步时间
+DMA write ≠ kernel-visible write
+signal observed ≠ payload visible
+除非定义了所需的 memory ordering
 ```
+
+讲师说明：Visibility 是相对于 consumer 和 memory scope 定义的，不是“总线上的某个设备看见过 bytes”。不同平台可能提供硬件一致性、显式 fence、event/stream dependency、acquire/release 或其他 scope；本稿不假设所有平台都需要同一种 flush/invalidate。关键是要有协议或 memory model 规定：目标写入何时进入 consumer 可观察的域。
+
+最常见的错误是先写 payload，再单独更新 flag；如果 flag 的发布没有 release/ordering 语义，consumer 可能先观察到 flag，却仍不能安全读取 payload。反过来，payload 已进入目标 memory system，也不代表 consumer 已经获得执行资格。证据应包含 consumer-side acquire、event/fence、memory-scope 文档或可重复的 protocol trace。
+
+## Slide 7｜Ordering：满足 consumer 所需的 happens-before
 
 ```text
-8 ranks: 7 个在 100 μs 完成，1 个在 180 μs 完成
-barrier 之后的 step communication time 仍接近 180 μs；
-其余 7 个 rank 合计等待约 7 × 80 μs。
+Ordering 不是“所有 packet 必须按序到达”，
+而是必要的先后关系必须成立：
+
+payload writes  →  publish signal
+phase n        →  phase n+1
+metadata       →  payload interpretation
+producer ready →  transfer launch
+completion     →  consumer launch
+
+sequence / phase / fence / barrier / acquire
+共同表达这些 happens-before 约束。
 ```
 
-讲师说明：AllReduce、MoE dispatch 和 pipeline stage 都含同步依赖。即使平均完成时间约 110 μs，只要下一个阶段必须等 8 个 rank，step 仍由 180 μs 的慢 rank 决定。慢点可能来自一条 hash collision、一个热点 expert、一次重传、CPU progress gap 或目标 HBM争用，因此平均网络带宽可能看起来很好。
+讲师说明：Ordering 必须说明“在哪个域、对谁成立”。多路径或 direct placement 可以允许 packet 乱序到达，只要 message identity、offset、sequence/bitmap 和 commit rule 能让目标按 logical order 发布；反过来，in-order delivery 也不等于 consumer 已经完成 acquire。需要特别防止 stale signal：buffer 复用后，上一轮迟到的 completion 或 flag 不能被解释成当前 generation 的 ready。
 
-这里要区分平均/P99/P999、最大 rank 时间和 barrier wait。诊断顺序是先在 per-rank timeline 找第一个偏离者，再沿它的 producer、path、queue、retry、completion 查因果；同时看其他 rank 的 idle/barrier gap。优化平均值但不缩短最大依赖，训练 step 或 TPOT 不会改善。
+因此要分开 arrival order、placement order、completion order 和 execution order。一个协议可以只保证其中一部分，剩余部分由 endpoint、runtime 或 kernel 补齐；这正是 Topic 3 要比较的状态归属问题。
 
-## Slide 7｜五种 pattern，其实是五种不同的等待关系
-
-| Pattern | 谁等谁 | 主要风险 | 首要指标 |
-|---|---|---|---|
-| AllReduce / RS+AG | 所有 rank 等同一轮完成 | slowest rank、ring 链路利用率 | step time、bus BW、tail |
-| AllGather / shard exchange | 每个 rank 等缺失 shard | chunk 顺序、内存写入压力 | exposed latency、HBM traffic |
-| P2P / Send-Recv | consumer 等 producer | startup、backpressure、ownership | message tail、queue depth |
-| EP All-to-All | 多 sender 同时冲向 expert | incast、热点、layout/metadata | max expert load、P99 |
-| KV / state movement | 请求等命中或搬运 | tier miss、存储带宽、容量 | hit rate、bytes/request、admission |
-
-讲师说明：不要把这些 pattern 只当 API 名字。AllReduce 的问题是集体同步和路径平衡；P2P 的问题是单条依赖和生命周期；MoE 的问题是动态 many-to-one；KV 的问题是对象复用和多级介质。后面看到同一套 NIC 在不同 workload 上表现不同，不是矛盾，而是等待关系不同。
-
-## Slide 8｜六个问题把隐藏的十三层串成一条因果链
+## Slide 8｜从五类证据转向后面的六个问题
 
 屏幕正文：
 
 ```text
-可消费条件
-  → 数据边界
-  → 状态与控制归属
-  → traffic / progress / wait-for graph
-  → scale 下暴露的 critical path
-  → 重画 compute / memory / interconnect 边界
+五类证据不是五个必然串行的阶段：
+
+Delivery      到达规定接收端
+Placement     写入正确目标位置
+Completion    某项义务结束并可被发布
+Visibility    consumer 可以观察 payload
+Ordering      依赖所需的先后关系成立
+
+CanConsume(B, x[i])
+  ⇔ D ∧ P ∧ C_publish ∧ V ∧ O
+  subject to valid buffer ownership / lifetime
 ```
 
-| 调用者入口 | 调用者通常显式决定 | 被隐藏、但仍然付费的工作 |
+| 证据 | 它证明什么 | 它不自动证明什么 |
 |---|---|---|
-| `torch.distributed.all_reduce(x)` | tensor、group、上层依赖 | schedule、progress、memory path、transport、queue、placement、completion、recovery |
-| NCCL collective / P2P | collective 语义、buffer、stream | channel/chunk 以下的 DMA、transport、path、link 与完成状态 |
-| RDMA verbs | buffer、operation、QP/endpoint | NIC pipeline、packet path、switch queue、link protection、remote visibility |
-| device `put/store` | target address、数据依赖 | endpoint queue、translation/protection、credit/replay、completion/fence |
+| Delivery | 规定接收端看到了所需 fragment | 目标 buffer 已写完、consumer 已可见 |
+| Placement | bytes 位于正确 address / offset / generation | memory ordering、consumer 执行资格 |
+| Completion | 指定层的 transfer / publication 义务结束 | 远端 application 已执行 |
+| Visibility | consumer 在所需 scope 下可观察 payload | payload 一定满足 logical sequence |
+| Ordering | payload、signal、phase、launch 的先后约束成立 | 缺失 bytes 已经到达 |
 
-讲师说明：这六问不是六套互不相干的技术。第一问定义终点；第二问画路径；第三问给沿途状态分配 owner；第四问把 workload 映射成动态等待关系；第五问判断哪些等待在 scale 下无法被隐藏；第六问检查改变硬件边界后责任是否真正消失。后面每一个协议、library、kernel 和硬件案例都必须回答其中至少一问，并最终回到 `CanConsume(B, x[i])`。
+讲师说明：到这里，五类证据的边界已经清楚：对本例的安全消费而言，每一项都需要有对应保证，但没有一项单独充分。它们可以被同一个 counter、fence 或 completion record 一次性发布，也可以由多个层次分别维护。`Buffer ownership/lifetime` 是横向安全条件，不能因为 payload 已可见就省略。后面每一个协议、library、kernel 和硬件案例都必须回到这个 contract，并说明自己提供了哪一类证据。
 
-所谓“站在多少层之上”不是固定数字，而取决于入口。调用 PyTorch collective 时，Slide 3 的第 3–12 层大多是透明的；直接写 verbs 时，应用已经进入第 6/7 层，但第 8–12 层仍然存在；一条 device-side remote store 看似更接近硬件，也仍没有取消 endpoint queue、link replay、remote completion 和 memory ordering。表中“隐藏”表示调用者通常不逐项编程，不表示实现一定完全相同。
+```text
+五类证据
+    → 物理与协议边界
+    → 状态与控制归属
+    → workload 产生 traffic、progress 与 wait-for graph
+    → scale 下暴露的 critical path
+    → 重画 compute / memory / interconnect 边界
+```
 
-本场固定用七步排查：写 producer→consumer 依赖与 bytes；标真实 source/destination；画 initiator/progress/data mover；分离 payload/control/completion/recovery；找每段服务率、队列与共享资源；对照 timeline/counter/topology/P99；最后只改一层再测 critical path。它避免两个常见误区：GPU 空转不一定是网络慢，链路未满也不一定缺带宽。
+这五类证据仍然分布在一套透明性阶梯中：
+
+```text
+workload dependency
+  ↓ framework / parallel strategy
+collective, P2P, EP or object API
+  ↓ algorithm / channel / chunk schedule
+CPU or GPU execution and progress
+  ↓ memory readiness / staging / registration / DMA
+transport connection / congestion / reliability
+  ↓ packetization / path selection / switch queues
+link serialization / FEC / replay / credit
+  ↓ destination placement / completion / memory ordering
+consumer synchronization and recovery
+```
+
+讲师说明：这张阶梯不是标准网络分层模型，而是追踪证据和隐藏工作的教学坐标。下一章暂时只沿 payload path 画 HBM、GPU fabric、PCIe、RNIC 和交换机；哪些层拥有 sequence、completion、visibility 和 recovery state，留到 Topic 3 再回答。
+
+本章的验收问题只有一个：如果有人说“数据已经到了”，请追问“到了哪个端点、写入哪个位置、哪一项 completion 已发布、对哪个 consumer 可见、满足哪一个 ordering 约束？”如果这五个答案不完整，`CanConsume(B, x[i])` 仍未被证明。
 
 ---
 
@@ -685,7 +716,7 @@ GPU ranks → multi-plane Clos → ECMP/SRv6 paths
 
 还要把论文自己报告的失效边界讲出来：如果是 NIC transceiver 本身 flap，可能同时失去该 NIC 的全部端口，QP 仍会失败，节点也可能需要被移出；MRC 主要缓解的是路径、链路和交换机层面的故障，不是任意 endpoint 故障的透明容错。[A10]
 
-同一论文还报告了特定 Cluster B 配置的 32 KiB back-to-back WRITE、application-level GPU-to-GPU 带宽约 770 Gb/s；另一个 2 B latency 测试（论文表格使用不同的 QP 配置）给出 T0-local 约 5.09 μs、cross-T1 约 6.54 μs（论文将 post-to-sender-completion 的往返测量除以二作为近似单向延迟）。这里的教学重点不是记住 770 Gb/s，而是按 Slide 4 的时间戳拆开：payload serialization、路径/交换排队、direct placement、SACK/ACK 和 consumer-visible completion；这些数不能泛化为所有 NIC、消息大小或拓扑。[A10]
+同一论文还报告了特定 Cluster B 配置的 32 KiB back-to-back WRITE、application-level GPU-to-GPU 带宽约 770 Gb/s；另一个 2 B latency 测试（论文表格使用不同的 QP 配置）给出 T0-local 约 5.09 μs、cross-T1 约 6.54 μs（论文将 post-to-sender-completion 的往返测量除以二作为近似单向延迟）。这里的教学重点不是记住 770 Gb/s，而是把测量拆成 Topic 1 的 placement/completion/visibility 证据，再结合 Topic 5 的 critical-path 时间线检查 payload serialization、路径/交换排队、SACK/ACK 与 consumer-visible completion；这些数不能泛化为所有 NIC、消息大小或拓扑。[A10]
 
 case study 的验收问题：
 
@@ -793,23 +824,25 @@ remote XPU
 
 ### 3.5.1 Control Plane, Data Plane and Collective Libraries
 
-## Slide 34｜一次通信至少有 payload、control、completion 三条路径
+## Slide 34｜一次通信有三类逻辑角色，recovery 是异常闭环
 
 ```text
-control:  group / route / buffer / connection / credit / policy
-          CPU/runtime ────────────────────────────────┐
-payload:  GPU A HBM ── DMA / fabric ──> GPU B HBM    │
-complete: ACK/CQE/immediate/counter/signal/event ────┤
-recovery: timer/NACK/retry/failover/runtime error ───┘→ consumer decision
+control / metadata: group / route / buffer / connection / credit / policy
+                    CPU/runtime ──────────────────────────────┐
+payload:            GPU A HBM ── DMA / fabric ──> GPU B HBM   │
+completion / publish: ACK/CQE/immediate/counter/signal/event ─┤
+recovery loop:      timer/NACK/retry/failover/runtime error ──┘→ update state / consumer decision
 ```
 
-讲师说明：framework 的 `all_reduce(x)` 只声明“这些 rank 上的 tensor 按某个 op 归约”。control path 先决定 rank、算法、chunk、channel、目标 buffer、connection 和生命周期；payload path 搬 x；completion path 分别告诉 producer 何时可复用 source、consumer 何时可使用 destination；recovery path 在缺失、超时、端点故障后决定重传还是向 runtime 报错。四条路径可能由 CPU、GPU、NIC/DPA 和 switch 分担。
+讲师说明：framework 的 `all_reduce(x)` 只声明“这些 rank 上的 tensor 按某个 op 归约”。这里区分的是三类逻辑角色，而不是三条必然独立的物理路径：control/metadata 决定 rank、算法、chunk、channel、目标 buffer、connection 和生命周期；payload 搬运真正被消费的 bytes；completion/publication 让某项本地或远端义务、目标 readiness 或 source lifetime 释放变得可观察。recovery 是异常控制闭环，在缺失、超时或端点故障后更新状态、安排重试/切换，或向 runtime 报错。同一个 endpoint 或链路可以承载多个角色，completion 也可能 piggyback 在控制消息上。
+
+因此，“任何一条路径停住”应理解为：某一类必要职责停住，并且它位于 GPU B 的 readiness dependency 上。payload 停住会缺 bytes，control/metadata 停住会缺 identity、placement 或 progress，必要的 completion/publication 停住会让 B 继续等待；这些都可能表现为 consumer kernel 未启动、polling 或 pipeline bubble。反之，与 B 无关的 source-side CQE 延迟可能只阻塞 A 复用 source buffer，并不一定阻塞 B 的消费。
 
 这里必须区分 API 返回与操作完成。异步 API 返回通常只表示 work 已排入 stream/queue，不表示 payload 已到 B；sender CQE 也可能只证明本地/transport completion，不自动等于 B 的 consumer 已经执行 acquire/fence。分析性能时分别测 control-plane setup、steady-state data rate 和 completion latency。
 
 UCCL-Tran 插在 collective library 与现有 RDMA primitives 之间：应用仍使用 NCCL 风格接口，plugin/CPU engine 管连接、memory registration、QP/path、CC/LB/order，并在 UC/UD 路径处理 ACK/retry；payload 仍由 RNIC 通过 GPUDirect DMA GPU memory。当前开源仓库另有 UCCL-P2P 与 UCCL-EP，接口和目的不同，不能把它们当成原论文同一个 datapath。[A40][B16]
 
-一个非常实用的观测方法是给四条路径分别着色：CPU trace 看 setup/post/poll，GPU trace 看 producer/consumer，NIC/link counters 看 payload，ACK/retry/counter 看 completion/recovery。若 payload 很快而 complete 慢，上层仍表现为通信慢；若 control setup 只在首轮慢，应与 steady state 分开报告。
+一个非常实用的观测方法是给三类逻辑角色和 recovery 闭环分别着色：CPU trace 看 setup/post/poll，GPU trace 看 producer/consumer，NIC/link counters 看 payload，ACK/retry/counter 看 completion 与 recovery。即使多个角色共用同一物理链路，也要在时间线上分别标出它们的证据。若 payload 很快而 required publication 慢，上层仍表现为通信慢；若 control setup 只在首轮慢，应与 steady state 分开报告。
 
 ## Slide 35｜Progress 决定“谁让通信继续向前走”
 
@@ -1074,7 +1107,7 @@ UltraEP 的公开实现把复制与 reroute 约束在其支持的 NVLink scale-u
 ---
 ## 4.4 Locality and Overlap：缩短暴露的等待
 
-> 本章坐标：不再逐层孤立优化，而是检查 placement、chunk、progress、completion 与 consumer dependency 能否共同缩短 Slide 4 的端到端 critical path。
+> 本章坐标：不再逐层孤立优化，而是检查 placement、chunk、progress、completion 与 consumer dependency 能否共同缩短 Topic 1 所定义的 consumer-visible critical path。
 
 ### 4.4.1 Topology, NUMA and Locality-Aware Placement
 
@@ -1174,7 +1207,7 @@ resource partitioning makes concurrency real
 
 讲师说明：这张时间轴的主线不是“每代更快”，而是把地址生成、data movement、compute 和 completion 从同一批线程中逐步解耦。Ampere `cp.async` 让 global→shared copy 不必先经过普通 register staging；Hopper TMA 用 Tensor Map 描述多维 layout，由专用 engine 做 bulk copy，并用 `mbarrier` 报告完成；Blackwell TMEM 把 Tensor Core accumulator 从普通 register file 分离；Rubin 公开预览继续扩展 runtime descriptor、跨 kernel/tile coordination 和 scale-up completion。[A19][A20][A22]
 
-每次解耦都增加新状态：descriptor、barrier phase、transaction slot、TMEM lifetime、remote counter。它减少的是执行线程上的地址/搬运/等待工作，不是让 memory bandwidth 和 queue 消失。分析时仍回到 Slide 4：机制缩短了 `T_launch_progress`、`T_stage_copy` 或 `T_complete` 中的哪一项，是否因更多 outstanding/资源占用增加了别的项。
+每次解耦都增加新状态：descriptor、barrier phase、transaction slot、TMEM lifetime、remote counter。它减少的是执行线程上的地址/搬运/等待工作，不是让 memory bandwidth 和 queue 消失。分析时仍回到 Topic 1 的 readiness contract 和 Topic 5 的 critical-path 模型：机制缩短了 launch/progress、staging、completion 或 consumer wait 中的哪一项，是否因更多 outstanding/资源占用增加了别的项。
 
 NVIDIA 公开口径还给出 Rubin 的 HBM4 峰值带宽最高 22 TB/s、NVLink 6 scale-up 带宽 3,600 GB/s、NVLink-C2C 1,800 GB/s、PCIe Gen6 x16 256 GB/s；这里只按官方数字原样引用，不自行解释单向/双向或 payload/aggregate。峰值差距也再次说明不同层级的 bytes 不可当成同一条“内存带宽”。
 
@@ -1188,7 +1221,7 @@ Completion:  谁知道搬运完成、何时可以消费？
 Lifetime:    buffer / cache line 何时可以复用或驱逐？
 ```
 
-讲师说明：单卡 kernel 常把三者压在同一个线程控制流里；TMA、TMEM 和远端通信把它们拆开。`mbarrier` 回答本地异步操作何时完成；remote counter/flag 回答对端数据何时可见；cache eviction priority 管的是数据生命周期提示。通信进入 kernel 后，优化对象不再只是 payload bandwidth，而是 payload、completion 与 lifetime 三条路径能否一起流水。
+讲师说明：单卡 kernel 常把三者压在同一个线程控制流里；TMA、TMEM 和远端通信把它们拆开。`mbarrier` 回答本地异步操作何时完成；remote counter/flag 回答对端数据何时可见；cache eviction priority 管的是数据生命周期提示。通信进入 kernel 后，优化对象不再只是 payload bandwidth，而是 bytes、readiness publication 与 buffer lifetime 这三类状态/责任能否一起流水。
 
 前序 p.71–78 已展示 `Tile Load / Tile Store`、Descriptor 和少量同步原语；本场把它们放回三个可验证问题：payload 放到哪里、谁确认 completion、buffer lifetime 何时结束。理想接口可让 compiler/runtime 生成地址、分块、排队和完成 bookkeeping，而不是让 kernel 作者逐条管理 SQE/CQE；它隐藏的是软件接口，不是物理资源。底层仍有有限 queue/credit、outstanding tracker、protection/translation、retry 或 error state；跨管理域还要回答 capability、撤销、generation、partial completion 与 endpoint failure。因此“地址语义”与“队列实现”不是非此即彼，常见实现会用地址式 API 驱动队列式硬件。
 
@@ -1397,7 +1430,7 @@ Prefill GPU ──RDMA──> Decode CPU pinned host pool
 | 决策主体 | distributed serving scheduler | SGLang decode scheduler/coordinator |
 | 可组合性 | 可为 decode 端供数 | 可消费进入 host pool 的 KV |
 
-讲师说明：DualPath 解决“远端 KV 从 storage 到 serving node 的入口带宽和路径调度”，HiSparse 解决“KV 到达 decode node 后，哪些 blocks 必须驻留 GPU”。两者可组合：DualPath 把 object 放入 D host/remote pool，HiSparse 再按 attention 需求选择子集进入 GPU。它们分别改变 Slide 4 中的 `T_queue/T_propagate` 和 `T_stage_copy/T_consumer_wait`，不应当作替代方案。
+讲师说明：DualPath 解决“远端 KV 从 storage 到 serving node 的入口带宽和路径调度”，HiSparse 解决“KV 到达 decode node 后，哪些 blocks 必须驻留 GPU”。两者可组合：DualPath 把 object 放入 D host/remote pool，HiSparse 再按 attention 需求选择子集进入 GPU。它们分别改变路径/队列等待与 staging/consumer wait，不应当作替代方案。
 
 组合设计要防止双重预取和重复副本：distributed scheduler、decode coordinator、object store 必须共享 block identity、版本和 ownership。否则同一 KV 可能从 P 和 storage 同时到达，浪费 bandwidth 或发布旧版本。
 
@@ -1766,7 +1799,7 @@ NetDAM           部分 collective/data movement       operation identity、orde
 
 讲师说明：Cerebras 减少部分细粒度芯片间边界，但 SRAM capacity 与 off-wafer I/O 成为更硬的约束；Groq 把更多 ordering/progress 决策前移到 compiler/static schedule，但动态请求、容量和外部故障仍需运行时处理；HBF、PNM 与 3D stacking 改变 memory-capacity/bandwidth boundary，却引入页延迟、寿命、散热和 software mapping；NetDAM 把部分 collective/data movement 放到 network/memory 附近，却必须新增 operation identity、权限、ordering、completion 与 partial-failure recovery。
 
-因此不能只问“少走了几跳”或“带宽提高了多少”。对每个新边界都要重新画 payload、control、completion 与 recovery 四条路径，再计算 compute、metadata、buffer、staleness、failure 和 thermal cost。责任可能被真正删除，也可能只是被转移、复制或变成更紧的跨层耦合；只有 GPU B 的 consumer-visible time、tail 和系统 goodput 改善，才算解决了原问题。
+因此不能只问“少走了几跳”或“带宽提高了多少”。对每个新边界都要重新画 payload、control/metadata、completion/publication 三类逻辑角色，并标出 recovery 闭环，再计算 compute、metadata、buffer、staleness、failure 和 thermal cost。责任可能被真正删除，也可能只是被转移、复制或变成更紧的跨层耦合；只有 GPU B 的 consumer-visible time、tail 和系统 goodput 改善，才算解决了原问题。
 
 ---
 

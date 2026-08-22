@@ -32,11 +32,11 @@
 24. 前序 p.45–50 的 synchronization、prior/posterior、audio timer 与 SQ/CQ 用作教学类比，不当成 I/O 机制的完备分类。真实依赖不能被违反，但其等待时间可与独立工作重叠；p.50 的 host doorbell 在常见 RNIC 路径中通常是对 device doorbell register 的 MMIO write（有时配合 host-memory doorbell record），不是 CPU-style interrupt。
 25. 新增的端到端延迟分解式是诊断框架，不是假设各项严格独立或可直接线性测量；queueing、serialization、placement、completion 与 overlap 在真实流水中可能相互重叠。
 26. `effective throughput ≤ min(...)` 是资源服务率的必要上界，用于提醒 source/destination memory、PCIe、NIC、fabric 和 consumer 都可能限速；它不替代 collective algorithm、duplex、协议开销和并发流的精确模型。
-27. “一个 API 下有十三层”是教学分层，不是标准网络分层模型。层数用于显式追踪隐藏工作，不声称每个实现都存在十三个独立模块。
+27. “一个 API 下有十三层”是教学分层，不是标准网络分层模型。层数用于显式追踪隐藏工作，不声称每个实现都存在十三个独立模块。Topic 1 的五类 readiness evidence（Delivery、Placement、Completion、Visibility、Ordering）也不是五个必然串行的 wire stage；同一个 counter/fence 可以发布多个条件，具体完成和 memory-ordering 语义仍以 API/协议为准。
 28. GPUDirect/peer DMA 被描述为 payload 可绕过 CPU DRAM，不等于 CPU 不参与注册、控制或 completion，也不保证所有平台都能避免 PCIe root/NUMA/IOMMU 限制；不支持时可能退回 staging。
 29. sender-side CQE、transport ACK、remote memory placement 和 consumer-visible completion 被分开描述；任何具体 API 的完成语义仍须以其规范、memory ordering 和实现为准。
 30. KV hierarchy 中的 host/remote/context tier 不被称为透明扩展 HBM。它们需要 object identity、placement、prefetch、publish、eviction 和 failure policy，且逐 token 同步访问通常不能直接按介质峰值带宽估算。
-31. 新增的 `32 KiB ÷ 50 GB/s ≈ 0.66 μs` 只用于说明 raw serialization 的数量级。`50 GB/s` 是把 400 Gb/s 做单位换算后的理想上限，未扣除 framing、FEC、协议 header、idle gap 与 payload efficiency；真实端到端延迟必须继续加入 DMA、queue、placement、completion 等事件。
+31. `32 KiB ÷ 50 GB/s ≈ 0.66 μs` 的 raw-serialization 数量级现在作为 Topic 5/后续性能分析的背景，不再作为 Topic 1 的 readiness 语义。`50 GB/s` 是把 400 Gb/s 做单位换算后的理想上限，未扣除 framing、FEC、协议 header、idle gap 与 payload efficiency；真实端到端时间还必须区分 DMA、queue、placement、completion、visibility 和 consumer wait。
 32. `initiator / progress engine / data mover / completion owner / recovery owner` 是责任归因框架，不声称每个实现都有五个独立硬件模块；同一 CPU、GPU kernel、RNIC 或 endpoint 可以同时承担多个角色。
 33. “正文事件链 + 讲师演算 + 症状/证据”是教学组织方式，不把启发式诊断词汇当成标准接口或性能模型。具体 API 的完成、ordering、memory scope 与错误语义仍以对应规范和实现为准。
 34. 前序的 `Local Retirement` 只表示 sender 收齐 fragment ACK 并解除 source-data obligation，不推出 remote placement、consumer visibility 或 target execution；sender CQE、transport ACK、remote placement 和 consumer-visible completion 继续分层。
@@ -51,6 +51,7 @@
 43. Groq 页只保留公开材料支持的 compiler/static scheduling、spatial dataflow 和 SRAM-centric design-space 描述。[C4] 未确认的内部微架构、确切功耗、cycle-level determinism 和 3D stacking 均不作事实断言。
 44. HBF 更适合低写入的冷权重/冷 context；热 KV 的写入压力、flash 页粒度、延迟、寿命和写放大仍需单独评估。PNM、3D stacking、low-latency interconnect 是研究/架构方向，不自动解决容量、热、接口标准或故障问题。
 45. NetDAM [A39] 是 2021 FPGA/100GE 研究原型；其延迟/jitter 不能线性外推到 1 Tb/s 量产系统。network-attached memory 仍需 ownership、capability、ordering、completion、backpressure、security 和 failure recovery，不等于透明共享内存。
+46. payload、control/metadata 和 completion/publication 是三类逻辑角色，不是三条必然独立的物理路径；它们可以共享链路、endpoint 或消息。recovery 是异常控制闭环，负责重试、切换、状态更新或报错。只有位于 consumer readiness dependency 上的角色停顿才会直接阻塞远端消费；source-side completion 延迟可能只影响发送端 buffer lifetime。
 
 ## 演讲时仍需限定
 
