@@ -52,10 +52,15 @@ if ($missingSpeakerNotes.Count -gt 0) {
 }
 
 $narrativeAnchors = @(
+    'CanConsume(B, x[i]) requires evidence for:',
     'Physical Architecture & Topology',
-    'Semantics, Transport and Reliability',
-    'Communication Software & Execution',
-    'Locality, Overlap, Distributed Kernel and KV'
+    'Progress, Completion and Recovery Ownership',
+    'Workload',
+    'Wait-for Graph',
+    'exposed cost = total cost',
+    'Meta 100K+ GPU',
+    'compiler/static schedule',
+    'off-wafer I/O'
 )
 foreach ($anchor in $narrativeAnchors) {
     if (-not $text.Contains($anchor)) {

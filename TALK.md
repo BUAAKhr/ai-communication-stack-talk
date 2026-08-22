@@ -6,6 +6,20 @@
 >
 > 证据标签：`[A]` 官方规范、官方文档或正式论文；`[B]` 官方开源仓库/项目文档；`[C]` 快速演进的公开材料、厂商预告或用户提供的二手分析。`[C]` 内容适合讲趋势，不宜讲成稳定产品事实或一手规范。涉及产品微架构时再区分“官方产品事实 / 学术研究方案 / 基于公开材料的推断”，不能用论文方案反推量产芯片实现。
 
+## 前导：从 Tensor Core 到跨 GPU 数据流
+
+从 Volta 到 Blackwell，Tensor Core 大致经历了 `WMMA → MMA → WGMMA → tcgen05` 的编程模型演进。矩阵吞吐提高后，问题不再只是“算得更快”，而是如何持续供数、推进依赖并隐藏搬运和等待；这不意味着计算不重要，而是数据供给和协调更容易进入端到端关键路径。
+
+数据搬运也在改变责任边界：从线程/warp 手工 load/store，到 Ampere 的 `cp.async`，再到 Hopper 的 TMA，以及 Blackwell 的 TMA + TMEM。与此同时，计算从同步发射逐步支持异步发射和异步完成。`__syncthreads()` 主要同步线程控制流，`mbarrier` 用于异步搬运阶段，transaction-aware wait（例如 `tcgen05.wait`）则把等待绑定到未完成事务。`async` 只拆开发起与完成，不会消除依赖。
+
+可以把这条演进压缩为一条数据流：
+
+```text
+Producer → Data Movement → Completion → Consumer
+```
+
+在单个 GPU 内，这条链由 Tensor Core、copy engine、barrier 和 memory system 协作完成；当 chunk 跨越 GPU、NIC 和交换机时，同样的问题会扩展为跨设备的 ownership、ordering、progress、visibility 和 recovery。以下六个 topic 就从这条数据流逐层展开。[A19][A20][A22]
+
 ## 课程主张与学习目标
 
 通信不是一根“更快的线”，而是把一个上层依赖翻译成若干次数据搬运、排队、同步与恢复的端到端过程。整场只反复使用一个基准场景：
@@ -13,6 +27,32 @@
 ```text
 GPU A 已经产生一个 tensor chunk
 GPU B 的下一步计算必须等到该 chunk 可以安全消费
+```
+
+### 核心问题
+
+> **当一个 Tensor Chunk 从 GPU A 发往 GPU B 时，它实际走过什么路径？GPU B 在什么条件下才真正获得消费它的资格？**
+>
+> 为了让这个 Chunk 在依赖满足后，以正确的顺序写入正确的位置，并对消费 kernel 可见，通信栈必须维护哪些状态、执行哪些协议？这些责任由哪一层承担，系统设计者又必须在哪些边界上做出取舍？
+
+这不是两个互不相关的问题。“走什么路径”决定数据跨过哪些资源、地址域和故障域；“何时可消费”决定每个边界必须建立什么 completion、visibility 与 ordering 证据。整场沿着以下六问推进：
+
+| Topic | 核心追问 | 本节任务 |
+|---|---|---|
+| 1. 什么才叫可消费？ | Delivery、Placement、Completion、Visibility、Ordering 分别证明什么？ | 先建立正确性坐标系；数据到达端点不等于 GPU consumer 已可见。 |
+| 2. 数据跨过哪些边界？ | HBM、GPU fabric、PCIe、NIC、RDMA 与交换机之间发生了什么？ | 画出真实 payload path，并标出共享资源、地址转换、ownership 与故障边界。 |
+| 3. 状态与控制由谁维护？ | 可靠性、顺序、拥塞、progress 和故障状态在哪些层维护？ | 比较 collective/runtime、host software、NIC/transport 与 fabric 的控制闭环；回答谁发现、谁推进、谁恢复。 |
+| 4. Workload 如何把流量变成等待？ | Ring、All-to-All、MoE、P2P/KV 与 distributed kernel 各自让谁等待谁？ | 从 traffic pattern 走到 progress、contention、overlap 和 wait-for graph，找到真正暴露的依赖。 |
+| 5. 哪些开销会进入 Critical Path？ | 启动/重启、稳态执行、故障检测恢复为何在大规模下不可忽略？ | 用 MRC 与 Meta 100K+ GPU 案例解释 scale 如何放大状态、资源、尾延迟与恢复成本。 |
+| 6. 如果重新划分边界会怎样？ | 改变 compute、memory 与 interconnect 的落点后，责任消失了吗？ | 用 Cerebras、Groq、HBF、PNM、3D stacking 与 NetDAM 检查责任是被删除、转移、复制，还是形成新耦合。 |
+
+```text
+可消费语义
+    → 物理与协议边界
+    → 状态与控制归属
+    → workload 产生 traffic、progress 与 wait-for graph
+    → scale 把暴露开销推入 critical path
+    → 重新划分 compute / memory / interconnect 边界
 ```
 
 听众在结束时应该能独立完成四件事：
@@ -62,31 +102,36 @@ consumer synchronization and recovery
 这里有一个重要口径：`Software Connection`、`Reliable Tunnel`、`Physical Path`、`DMA Context`、`Bounded Transaction`、`Local Retirement`、`Send/Execute Fence` 等仍是前序讲者的架构词汇，不是行业通用标准对象；新版虽已初步展示相关分层和 Tile 操作，也不能把它们直接等同为 RDMA QP/RC、UET PDC/CCC、Falcon connection、UCCL connection/chunk 或 GEMM tile。Tile Load/Store 在前序中是设计语言，本场会把它连接到已公开的 device/runtime 机制，并说明 queue、backpressure、replay、protection 和 completion state 仍然存在。
 
 ```text
-0. One tensor, thirteen hidden layers
-1. Data moves across physical boundaries
-2. The fabric provides semantics and guarantees
-3. Software turns dependencies into work
-4. We shorten the critical path with overlap and co-design
+1. What makes a tensor chunk consumable?
+2. Which physical and protocol boundaries does it cross?
+3. Where do state and control live?
+4. How does workload traffic become a wait-for graph?
+5. Which costs enter the critical path at scale?
+6. What changes when we redraw compute, memory and interconnect boundaries?
 ```
 
 ## 总时间建议
 
 | 章节 | Slides | 时间 |
 |---|---:|---:|
-| 开场：一个 tensor 隐藏了多少层 | 1–8 | 17 min |
-| 1. 数据经过哪些物理边界 | 9–21 | 25 min |
-| 2. fabric 提供哪些语义与保证 | 22–33 | 29 min |
-| 3. 软件如何把依赖变成工作 | 34–49 | 31 min |
-| 4. 如何用 overlap 与 co-design 缩短关键路径 | 50–71 | 44 min |
-| 5. 100K+ GPU 通信栈与推理硬件 | 72–87 | 38 min |
+| 1. 什么才叫可消费 | 1–8 | 17 min |
+| 2. 数据跨过哪些边界 | 9–21 | 25 min |
+| 3. 状态与控制由哪一层维护 | 22–38 | 39 min |
+| 4. Workload 如何把流量变成等待 | 39–69 | 61 min |
+| 5. 哪些开销会在 scale 下进入 Critical Path | 70–78 | 21 min |
+| 6. 重新划分 compute、memory 与 interconnect 边界 | 79–87 | 21 min |
 | 总结 | 88 | 2 min |
-| **总计** | **88** | **188 min** |
+| **总计** | **88** | **186 min** |
 
 联讲版不删除页面，但把 Slide 22–25 中前序已经讲过的 credit、HOL、lossless 与 replay 机制压缩为约 8 分钟，重点保留“这些机制在一个真实 tensor transfer 中改变了什么”。Slide 26–33 仍完整讲多路径、恢复、拥塞和可靠性边界；新增案例可压缩为约 170–180 分钟。
 
 ---
 
-# 开场：先跟踪一个 tensor chunk（0–17 min）
+# 1. 什么才叫“可消费”？（0–17 min）
+
+> 本章只定义“可消费”的终点和证据类型；Slide 5–7 只用吞吐、同步和 workload pattern 建立时间坐标，详细的 traffic、progress 与 wait-for graph 留到 Topic 4.
+
+
 ## Slide 1｜先说清楚：这场课结束时你要能画出什么
 
 屏幕正文：
@@ -95,7 +140,11 @@ consumer synchronization and recovery
 AI Communication Stack
 From One Tensor to the Whole System
 
-目标：从一个 API 调用，追到“数据何时可被对端安全消费”
+GPU A ── Tensor Chunk ──?──> GPU B / consumer kernel
+
+两条主问题：
+1. 这块数据实际走过什么路径？
+2. GPU B 凭什么判断“现在可以消费”？
 ```
 
 讲师说明：先不要记厂商、协议或缩写。我们要建立的是一个可迁移的观察方法：任何通信操作都可以从“数据在哪里、谁推动它、何时可见、出了问题谁恢复”四个角度拆开。后面看到 NCCL、RDMA、UET、TMA 或 MegaMoE，都把它们放回这条路径，而不是把它们当成互不相干的产品名。
@@ -110,10 +159,13 @@ From One Tensor to the Whole System
 GPU A / HBM                         GPU B / HBM
   x[i] 已产生 ──?──> 目标 buffer       K_B 等待 x[i]
 
-必须经历：ready → launch → move → place → complete → consume
+CanConsume(B, x[i]) requires evidence for:
+Delivery ∧ Placement ∧ Completion ∧ Visibility ∧ Ordering
 ```
 
-讲师说明：假设 GPU A 在 HBM 中产生了一个 32 KiB chunk，GPU B 的下一个 tile 依赖它。这里的“通信完成”至少可能有四个时刻：数据包到达某个端点、payload 写进目标地址、传输层确认、GPU B 的 kernel 按规定顺序观察到它。它们不一定同时发生。我们把 payload、控制信息和完成通知分开画：payload 负责搬 bytes，控制路径负责序号、credit、ACK、counter、fence 或 error。任何一个路径停住，B 都可能表现为“算力没有跑满”。
+讲师说明：假设 GPU A 在 HBM 中产生了一个 32 KiB chunk，GPU B 的下一个 tile 依赖它。`Delivery` 问必要的 packet/fragment 是否到达；`Placement` 问 bytes 是否写入正确 offset；`Completion` 问哪一个 operation 的义务已经结束；`Visibility` 问目标 GPU 的 memory system 与 consumer 是否已经能观察到写入；`Ordering` 问其他 payload、signal、fence 与 consumer launch 之间的先后约束是否成立。这五项是分析“可消费资格”的证据类别，不是所有协议都严格串行执行的五个 wire stage。
+
+这里尤其要分开 sender-side completion 与 remote consumability：本地 CQE 可能只允许 A 复用 source buffer，不必然证明 B 的 kernel 已经 acquire 到目标数据。我们把 payload、控制信息和完成通知分开画：payload 负责搬 bytes，控制路径负责序号、credit、ACK、counter、fence 或 error。任何一条路径停住，B 都可能表现为“算力没有跑满”。
 
 本页的数值只是教学单位，不是某个协议规定的最佳 chunk。真实大小由算子 tile、memory layout、NIC offload、MTU、拥塞窗口和接收端 buffer 一起决定。
 
@@ -228,33 +280,39 @@ barrier 之后的 step communication time 仍接近 180 μs；
 
 讲师说明：不要把这些 pattern 只当 API 名字。AllReduce 的问题是集体同步和路径平衡；P2P 的问题是单条依赖和生命周期；MoE 的问题是动态 many-to-one；KV 的问题是对象复用和多级介质。后面看到同一套 NIC 在不同 workload 上表现不同，不是矛盾，而是等待关系不同。
 
-## Slide 8｜先确认自己站在哪一层，再开始诊断
+## Slide 8｜六个问题把隐藏的十三层串成一条因果链
 
 屏幕正文：
 
-| 调用者看到的接口 | 调用者通常显式决定 | 仍被隐藏、但仍在付费的层次 |
+```text
+可消费条件
+  → 数据边界
+  → 状态与控制归属
+  → traffic / progress / wait-for graph
+  → scale 下暴露的 critical path
+  → 重画 compute / memory / interconnect 边界
+```
+
+| 调用者入口 | 调用者通常显式决定 | 被隐藏、但仍然付费的工作 |
 |---|---|---|
-| `torch.distributed.all_reduce(x)` | tensor、group、依赖关系 | collective schedule、progress、memory path、transport、topology、queue、link、placement、completion、recovery |
-| NCCL collective / P2P | collective 语义、buffer、stream | channel/chunk 的部分决策以下，仍有 DMA、transport、path、link 与完成状态 |
+| `torch.distributed.all_reduce(x)` | tensor、group、上层依赖 | schedule、progress、memory path、transport、queue、placement、completion、recovery |
+| NCCL collective / P2P | collective 语义、buffer、stream | channel/chunk 以下的 DMA、transport、path、link 与完成状态 |
 | RDMA verbs | buffer、operation、QP/endpoint | NIC pipeline、packet path、switch queue、link protection、remote visibility |
 | device `put/store` | target address、数据依赖 | endpoint queue、translation/protection、credit/replay、completion/fence |
 
-```text
-教学展开顺序：先沿 payload 看“在哪里” → 再看 fabric 保证“何时可用”
-             → 再回到软件看“谁生成并推进工作” → 最后做跨层优化
-```
+讲师说明：这六问不是六套互不相干的技术。第一问定义终点；第二问画路径；第三问给沿途状态分配 owner；第四问把 workload 映射成动态等待关系；第五问判断哪些等待在 scale 下无法被隐藏；第六问检查改变硬件边界后责任是否真正消失。后面每一个协议、library、kernel 和硬件案例都必须回答其中至少一问，并最终回到 `CanConsume(B, x[i])`。
 
-讲师说明：所谓“站在多少层之上”不是固定数字，而取决于入口。调用 PyTorch collective 时，Slide 3 的第 3–12 层大多是透明的；直接写 verbs 时，应用已经进入第 6/7 层，但第 8–12 层仍然存在；一条 device-side remote store 看似更接近硬件，也仍没有取消 endpoint queue、link replay、remote completion 和 memory ordering。表中“隐藏”表示调用者通常不逐项编程，不表示实现一定完全相同。
+所谓“站在多少层之上”不是固定数字，而取决于入口。调用 PyTorch collective 时，Slide 3 的第 3–12 层大多是透明的；直接写 verbs 时，应用已经进入第 6/7 层，但第 8–12 层仍然存在；一条 device-side remote store 看似更接近硬件，也仍没有取消 endpoint queue、link replay、remote completion 和 memory ordering。表中“隐藏”表示调用者通常不逐项编程，不表示实现一定完全相同。
 
 本场固定用七步排查：写 producer→consumer 依赖与 bytes；标真实 source/destination；画 initiator/progress/data mover；分离 payload/control/completion/recovery；找每段服务率、队列与共享资源；对照 timeline/counter/topology/P99；最后只改一层再测 critical path。它避免两个常见误区：GPU 空转不一定是网络慢，链路未满也不一定缺带宽。
 
 ---
 
-# 1. 数据经过哪些物理边界：Physical Architecture & Topology (17–42 min)
+# 2. 数据究竟跨过哪些边界？Physical Architecture & Topology（17–42 min）
 
-> 本章坐标：主要展开 Slide 3 的第 5、6、8、9、10 层。先回答 payload 物理上经过哪里、共享什么资源；上层 API、算法和 transport 暂时保持透明。
+> 本章只回答“payload 经过哪里”。沿 HBM、GPU/local fabric、PCIe/C2C、RNIC DMA、RDMA transport 和 switch fabric 画出可能路径；每跨一个边界，就检查 address、ownership、queue、completion、visibility 和 failure model 如何变化。实际路径取决于 GPU 位置、拓扑、通信库和 fallback，并非每次传输都会经过全部层次。状态 owner 留给 Topic 3。
 
-## 1.1 Inside AI Servers: Package, Node and NUMA
+## 2.1 Inside AI Servers: Package, Node and NUMA
 
 ## Slide 9｜GPU A → GPU B 的第一条路径：节点内专用 fabric
 
@@ -293,7 +351,8 @@ completion: transport ACK/CQE/flag → GPU B acquire/fence → consume
 
 讲师说明：这条路径通常使用 GPUDirect RDMA 或同类 peer DMA。CPU 可能完成初始化、内存注册、WQE post 和 CQ polling，但 steady-state payload 可以从 GPU HBM 被 RNIC DMA 读取，经 PCIe、网络和远端 PCIe 直接写入 B 的 HBM，不必先进入 CPU DRAM。这里至少串联了 source HBM、GPU–NIC PCIe、RNIC DMA/packet engine、网络瓶颈、remote RNIC 和 destination HBM 六个服务站。
 
-以端口 400 Gb/s 为例，wire 上限约 50 GB/s；若 GPU→NIC 实测 DMA 只有 35 GB/s，交换网络再快也无法提高端到端 payload。反过来，DMA 能到线速而 flow hash 撞在同一 uplink，瓶颈位于网络。若 payload 已写入 B 但 remote flag/CQE 到得晚，链路 counter 会很好看，consumer 仍会空等。最容易犯的错误是把“GPU 与 NIC 都在一台服务器”误认为一定是同一 PCIe switch 或最短 NUMA 路径；需用 `nvidia-smi topo -m`、PCIe 拓扑、NUMA 绑定、DMA microbenchmark 和 NIC counters共同确认。
+以端口 400 Gb/s 为例，wire 上限约 50 GB/s；若 GPU→NIC 实测 DMA 只有 35 GB/s，交换网络再快也无法提高端到端 payload。反过来，DMA 能到线速而 flow hash 撞在同一 uplink，瓶颈位于网络。若 payload 已写入 B 但 remote flag/CQE 到得晚，链路 counter 会很好看，consumer 仍会空等。最容易犯的错误是把“GPU 与 NIC 都在一台服务器”误认为一定是同一 PCIe switch 或最短 NUMA 路径；需用
+vidia-smi topo -m`、PCIe 拓扑、NUMA 绑定、DMA microbenchmark 和 NIC counters共同确认。
 
 ## Slide 11｜GPU A → GPU B 的第三条路径：经过 CPU/host memory 的 fallback
 
@@ -355,7 +414,7 @@ compute die 0 ── 10 TB/s chip-to-chip interconnect ── compute die 1
 建议图示：只画两个 compute die、相邻的 HBM 资源和中间 NV-HBI/芯片间链路；在逻辑层外框写 “one CUDA GPU”，在物理层标 “local / cross-die path may differ”。不要把 HBM stack 或 L2 slice 与某个 die 的精确归属画成官方事实，也不要虚构内部一致性目录或具体 L2 分区。
 
 ---
-## 1.2 From Node to Cluster: NIC, Switch and Topology
+## 2.2 From Node to Cluster: NIC, Switch and Topology
 
 ## Slide 15｜NIC、DPU、交换机和 scale-up endpoint 各自搬什么
 
@@ -456,7 +515,7 @@ Node 0: GPU2─NIC2 ─┘       └─ NIC2─GPU2 : Node 1
 比较拓扑时至少固定 endpoint 数、每端口带宽、traffic matrix、算法和故障假设，再比较 path length、共享边、可用 path diversity 和最慢 rank。峰值链路速率相同不代表 step time 相同。证据是 hop/path distribution、per-edge bytes/queue、partition shape 和 per-rank completion；上层通常只看到 collective tail。
 
 ---
-## 1.3 Scale-Up vs. Scale-Out: Physical and Failure Boundaries
+## 2.3 Scale-Up vs. Scale-Out: Physical and Failure Boundaries
 
 ## Slide 21｜Scale-up / scale-out：同一个 x[i]，跨过边界后协议就变了
 
@@ -473,11 +532,11 @@ Node 0: GPU2─NIC2 ─┘       └─ NIC2─GPU2 : Node 1
 用同一故障就能看清层次：一根 link 出现可纠正 bit error，FEC/LLR 可以让上层无感；某条多跳路径丢 packet，transport 需要知道 message identity 和 gap；远端进程重启后，即便 packet transport 已完整交付，runtime 仍可能必须重建 communicator 或重跑 iteration。观测应分开 link replay、credit stall、transport retransmit、completion timeout 和 rank failure。所谓“scale-up 更可靠”或“scale-out 更灵活”只是设计倾向，必须落到保护边界与状态预算。
 
 ---
-# 2. fabric 提供哪些语义与保证：Semantics, Transport and Reliability (42–71 min)
+# 3. 可靠性、顺序、拥塞、Progress 与故障状态由谁维护？（42–81 min）
 
-> 本章坐标：主要展开第 7–12 层。物理路径已经画清楚，现在逐项回答乱序、拥塞、丢包、放置、完成和恢复如何让一批 bytes 变成“可安全消费的数据”。
+> 本章坐标：主要展开第 4、7–12 层。物理路径已经画清楚，现在比较 collective/runtime、host software、NIC/transport 与 fabric 分别保存什么状态；谁发现 gap 或 congestion，谁持续推进，谁发布完成，谁在失败后恢复。这里不是给每类问题指定唯一 owner，而是识别多个控制闭环及其交界面。
 
-## 2.1 Memory Semantics vs. RDMA Message Semantics
+## 3.1 Memory Semantics vs. RDMA Message Semantics
 
 ## Slide 22｜Memory semantic 和 RDMA message semantic，只是两种发起方式
 
@@ -494,22 +553,23 @@ Node 0: GPU2─NIC2 ─┘       └─ NIC2─GPU2 : Node 1
 性能上不能只比较 API 指令数。memory path 的远端延迟会占住 load/store queue、MSHR、TMA slot 或 transaction buffer；verbs path 会消耗 WQE/doorbell、QP context、CQ polling 和注册状态。应比较从 producer ready 到 consumer visible 的完整时间。观测上，前者重点看 remote outstanding、fabric stall 和 fence wait；后者重点看 post-to-DMA gap、CQE latency、QP/retry counters 和 GPU–NIC DMA bandwidth。常见误区是把“地址式接口”理解成底层没有队列，或把“message 接口”理解成一定经过 host memcpy。
 
 ---
-## 2.2 Reliability as Four Separate Problems
+## 3.2 Consumability and Layered Reliability
 
-## Slide 23｜“可靠”至少要回答四个互不等价的问题
+## Slide 23｜Topic 1 定义终点；本页分配状态观察与推进责任
 
 ```text
-Delivery:   packet / flit 是否到达？缺失如何检测和恢复？
-Placement:  乱序到达的 bytes 应写入哪里？
-Completion: 何时可以通知 producer/consumer 操作完成？
-Ordering:   哪些事务必须先可见，何时允许 fence/commit？
+Delivery:   link / transport 观察 gap、duplicate，并触发 retry
+Placement:  endpoint / DMA 维护 address、offset 与 buffer ownership
+Completion: device / NIC / runtime 发布 CQE、counter 或 signal
+Visibility: memory system / consumer 建立 scope 与 acquire 语义
+Ordering:   protocol / runtime / kernel 维护 sequence、phase 与 dependency
 ```
 
-讲师说明：用三个 packet 搬 x[i]。packet 0 和 2 到达、packet 1 丢失时，`delivery` 负责发现缺口；`placement` 决定 0 和 2 是否能先写到正确 offset；`completion` 必须等缺失部分补齐后才能宣布整个 chunk 完成；`ordering` 再决定 GPU B 是否能在看到 completion 后观察到完整 payload。四者任意一项缺失，消费者都可能读到旧值、半成品或永久等待。
+讲师说明：Topic 1 已定义“可消费”的五类证据；本页只问哪一层能观察、证明并推进它们。常见的责任分布是：`Delivery` 由 link/transport 发现 gap、duplicate 并触发 retry；`Placement` 由 endpoint/DMA 处理 address、offset 与 buffer ownership；`Completion` 由 device/NIC/runtime 发布 CQE、counter 或 signal；`Visibility` 由 memory system 与 consumer 的 scope/acquire 语义建立；`Ordering` 由 protocol、runtime 或 kernel 维护 sequence、phase 与 dependency。实际系统通常跨层协作，不存在固定的单层 owner。
 
 因此，out-of-order arrival 不等于 out-of-order completion；DMA 已经写入目标地址也不等于 memory model 已允许 kernel 观察。Scale-up 还要把 completion 与 acquire/release、scope、atomicity 和错误响应对齐。Orderlock 论文在其模型中证明，in-order delivery、lossless transmission 与 out-of-order capability 同时成立，是该类死锁的必要充分条件；direct placement 只是显式化落点和 gap，并没有取消 completion、fence 或有限 buffer。[A41]
 
-观测时分别找证据：sequence gap/NACK 证明 delivery 问题，reorder bitmap/offset 证明 placement，CQE/counter/flag 证明 completion，fence/barrier wait 证明 ordering。只看“没有 packet drop”无法证明应用语义正确。
+观测时分别找证据：sequence gap/NACK 证明 delivery 问题，reorder bitmap/offset 证明 placement，CQE/counter/flag 证明 completion，cache/memory scope 与 acquire/consumer event 证明 visibility，fence/barrier wait 证明 ordering。只看“没有 packet drop”无法证明应用语义正确。
 
 前序术语表可以帮助把同一例子再拆细，但这些词需要在这里第一次完整解释：`Move` 是较大的完整搬运任务，本身未必只有一个完成点；`Bounded Transaction` 是其中有稳定 identity、有限 size、一次 retirement 的工作单元；`Transaction Fragment` 是可独立 place 的逻辑片段；某个 fragment 每重发一次都会形成新的 `Incarnation`。sender 收齐 fragment ACK 得到的 `Local Retirement`，只表示可以解除 source-buffer obligation，不表示 B 的 kernel 已经可见或执行。最终还要区分 `Terminal Result`：success、definite rejection 或 unknown transport failure；timeout 只是等待超限，不能自动推出远端未执行。
 
@@ -548,7 +608,7 @@ IRN 的核心贡献不是说 PFC 永远无用，而是证明 RDMA 并不从原�
 怎么判断问题在这里：同时查看 pause duration、per-priority queue occupancy、ECN/trim/drop、上游端口 idle/busy 和 victim-flow latency。如果链路利用率下降而 pause/queue 上升，瓶颈不是序列化带宽，而是 backpressure。常见误区是把“零 drop”当作“零拥塞”或“低延迟”。
 
 ---
-## 2.3 Multipath, Out-of-Order and Direct Placement
+## 3.3 Multipath, Out-of-Order and Direct Placement
 
 ## Slide 26｜Multipath：允许乱序到达，维持所需的完成顺序
 
@@ -596,6 +656,10 @@ one message / transaction
 UCCL 的 UC 路径用 `write_with_imm` 让 payload 直接进 GPU、32-bit immediate 进入 CPU control path；UD fallback 用 scatter-gather 把 control header 和 GPU payload fate-share，并由 GPU kernel协助重组。RC fallback 即使关闭硬件 CC，packet reliability 仍由 RNIC 保留。它的 32 KiB control coalescing、256-QP 等选择是论文实现对 CPU 成本、path entropy 和 control precision 的折中，不是通用协议常数。[A40][B16]
 
 所以“支持 multipath”不能单独回答可部署性：还要问应用/NCCL 是否要改、NIC 是否要换、wire 是否兼容、CPU/DPA 是否有预算、谁能看到 ECN/RTT/trim，以及 failure state 落在哪里。MRC 还必须诚实标出语义边界：当前公开论文中的 transport 只定义 RDMA WRITE 和 WRITE-with-IMMEDIATE；SEND/RECV、READ、ATOMIC 不能自动从“RC-compatible”推断为已支持。
+
+### MRC preview：路径韧性与状态边界
+
+> 本节只用 MRC 说明 transport/path 层的状态放置和恢复边界；Topic 5 再讨论它如何影响大规模训练的 recovery critical path。MRC 主要缓解 path、link 和 switch failure，不应写成任意 endpoint failure 的透明容错。
 
 ### MRC case study：一次故障为什么没有杀死训练
 
@@ -647,7 +711,7 @@ case study 的验收问题：
 UEC 的 RUD 路径要求处理 SACK bitmap，ROD 除 probe 外可选；Falcon 公开材料强调快速、准确的重传。[A31][A32] RACK/TLP 可作为时间型 loss detection 思路介绍，但不能说 UEC/Falcon 必然逐条采用 TCP 同名实现。观测时看 loss event 到 retransmit 的时间、retransmitted bytes/lost bytes、duplicate count、replay-buffer occupancy 和 completion P99。
 
 ---
-## 2.4 Congestion Control, Retry and State Placement
+## 3.4 Congestion Control, Retry and State Placement
 
 前序第 50 页实际展示的是 SQ/CQ 生命周期；新版 p.64–70 已初步讨论 RC QP 耦合与 network-layer 拆分。本节把该问题放回公开实现重新核对：IB/RoCE QP 常把寻址、PSN/ordering、reliability、path selection 与 SQ/RQ/CQ progress 关联在一个硬件对象及其状态中；不同代际 RNIC 又提供 multi-QP、shared receive queue、DC transport、adaptive routing、selective recovery 或厂商扩展。不能把“单路径、Go-Back-N、PFC、出错即杀 QP”写成所有 RC 实现的永久定义。真正的问题是这些轴能否独立演进，以及状态应由 NIC SRAM、host memory、DPA 还是 software runtime 承担。[A29][A31][A32][A40]
 
@@ -723,11 +787,11 @@ remote XPU
 但这不是免费“大坝”。A 必须先把 x[i] 的 ownership 交给本地 appliance，appliance 何时可覆盖 buffer；跨 rack 失败是否重试；远端 appliance 何时 publish；B 读取时如何保证版本与 ordering；appliance 自身掉电如何恢复，都需要协议。新增 staging/copy 与 hop 也可能使小消息更慢。验证时比较 XPU-visible RTT、appliance queue/buffer、inter-rack utilization、extra-copy bytes、publish latency 和 failure recovery。NetDAM 只作为这种思想的研究原型，不是行业标准事实。[A39]
 
 ---
-# 3. 软件如何把依赖变成工作：Communication Software & Execution (71–102 min)
+## 3.5 软件如何把依赖变成工作：Progress, Completion and Recovery Ownership
 
-> 本章坐标：回到第 0–4 层。解释 workload dependency 如何被翻译成 collective/P2P/EP schedule，以及 CPU、GPU、NIC/DPU 中究竟谁负责持续推进。
+> 本节坐标：回到第 0–4 层，补齐 transport 上方的控制 owner。解释 workload dependency 如何被翻译成可执行 schedule，以及 CPU、GPU、NIC/DPU 中究竟谁负责持续推进、发布完成与处理错误。
 
-## 3.1 Control Plane, Data Plane and Collective Libraries
+### 3.5.1 Control Plane, Data Plane and Collective Libraries
 
 ## Slide 34｜一次通信至少有 payload、control、completion 三条路径
 
@@ -821,7 +885,12 @@ UCCL-Tran 是另一种折中：GPU payload 走 GPUDirect，host CPU 运行 TX/RX
 DOCA 是 BlueField/DPU 的基础设施与加速 SDK，不是 NCCL/MPI 的同层替代；SHARP 是 collective reduction offload，UCCL 是 host software transport。验证时除 CPU 外，还看 DPU core/queue、NIC SRAM/context、PCIe transactions、wire bytes、GPU SM/HBM 和 fallback count，才能证明工作被消除还是仅被搬走。[A6]
 
 ---
-## 3.2 Where Should Reduction Execute?
+
+# 4. Workload 如何塑造 Traffic、Progress 与 Wait-for Graph？（81–142 min）
+
+> 本章坐标：前面已经知道路径和 state owner；现在把 `workload dependency → traffic pattern → message/token/object granularity → topology/queue contention → progress/synchronization → wait-for graph → exposed critical path` 串起来。重点不是罗列 API，而是解释谁在等谁、谁推进通信、哪里发生 contention，以及一个局部 stall 如何传播到 collective。
+
+## 4.1 Collective Pattern: Where Should Reduction Execute?
 
 ## Slide 39｜In-network reduction 的价值不只是在链路上少发 bytes
 
@@ -848,7 +917,7 @@ endpoint partials → aggregation tree / multicast-reduce engine → result
 观测时同时看 network bytes、GPU HBM traffic、communication-kernel SM time、tree setup、reduce-engine occupancy 和 fallback/error count。若 wire bytes 下降但 GPU 等待未降，瓶颈可能在 tree setup、completion 或结果分发，而不是 reduction 算力。
 
 ---
-## 3.3 P2P and Object/State Movement
+## 4.2 P2P and Object/State Movement
 
 ## Slide 40｜P2P 不只是 bytes：它搬的是有生命周期的对象
 
@@ -905,7 +974,7 @@ DualPath:    storage → prefill
 新增路径同时增加一致性与调度问题：两边不能对同一 block 发布冲突版本，decode 必须知道哪些 blocks 已到，存储和 NIC 带宽也可能共享瓶颈。验证时比较 storage read、P/D NIC、P→D transfer 和 decode admission 的时间线，而不是只报告总 network throughput。
 
 ---
-## 3.4 EP and MoE Communication
+## 4.3 EP and MoE Communication
 
 ## Slide 44｜一个 MoE token 要经历七个步骤，all-to-all 只是中间一段
 
@@ -1003,11 +1072,11 @@ UltraEP 的公开实现把复制与 reroute 约束在其支持的 NVLink scale-u
 ---
 
 ---
-# 4. 如何跨层缩短关键路径：Locality, Overlap, Distributed Kernel and KV (102–146 min)
+## 4.4 Locality and Overlap：缩短暴露的等待
 
 > 本章坐标：不再逐层孤立优化，而是检查 placement、chunk、progress、completion 与 consumer dependency 能否共同缩短 Slide 4 的端到端 critical path。
 
-## 4.1 Topology, NUMA and Locality-Aware Placement
+### 4.4.1 Topology, NUMA and Locality-Aware Placement
 
 ## Slide 50｜MCM 的三角约束：数据、任务与缓存必须一起放
 
@@ -1047,7 +1116,7 @@ CARVE 用本地显存容量缓存 remote working set；HMG 研究 hierarchy 下�
 建议图示：横向画 `fine-grained load/store → coalesce/track readiness → efficient message → remote placement/cache`；下方单独放四个标签 `locality / granularity / completion / consistency`。
 
 ---
-## 4.2 Compute-Communication Overlap and Async Data Movement
+### 4.4.2 Compute-Communication Overlap and Async Data Movement
 
 ## Slide 52｜Overlap 只能隐藏“依赖允许且资源可并行”的那一段
 
@@ -1185,7 +1254,11 @@ PTX 要求 counter 为 8 字节且 256 字节对齐，更新粒度未规定。`f
 建议图示：对比“data write → fence → remote flag/ack”与“data write + counted completion”两条时序，不画成 receiver 无需同步。
 
 ---
-## 4.3 Distributed Kernels and MegaMoE
+## 4.5 从 Tensor Core dataflow 到跨设备 dependency
+
+> 本节把单 GPU 的异步 producer–consumer dataflow 作为跨 GPU communication 的桥梁，不另起一个硬件演进章节。
+
+### 4.5.1 Distributed Kernels and MegaMoE
 
 ## Slide 60｜Distributed kernel 把 progress engine 放进 GPU kernel
 
@@ -1257,7 +1330,11 @@ TMA + TMEM + two-CTA tcgen05 MMA
 建议图示：画出上述六段 dataflow，并在下方把 symmetric workspace 标成 control plane；不要只画一个写着 “fused kernel” 的大方框。
 
 ---
-## 4.4 Communication-Memory-Storage Co-design
+## 4.6 KV 与对象移动：用容量换延迟
+
+> 本节关注 KV/object 的 placement、tiering、prefetch 与 publish；它们改变的是等待位置和容量约束，不是把远端存储变成 HBM。
+
+### 4.6.1 Communication-Memory-Storage Co-design
 
 ## Slide 63｜KV cache 的一次 miss，会触发另一条完整通信路径
 
@@ -1372,42 +1449,53 @@ local HBM shortage → rack/pod context tier → remote DC / regional placement
 可用依赖频率做数量级判断：每个 token 都发生的边会把 WAN RTT 直接加到 TPOT；每个请求一次且能提前数十毫秒预取的 object，才可能把 WAN 移到后台。观测时按 dependency frequency、prefetch slack、WAN P50/P99、replica freshness 和 failover time 分开；“跨机房带宽足够”不能证明同步边可接受。
 
 ---
-## 4.5 How Communication Shapes Hardware Evolution
+# 5. 哪些开销会在 Scale 下进入 Critical Path？（142–163 min）
 
-## Slide 70｜Co-design 先问“这批 bytes 是否必须在关键路径上出现”
+> 本章坐标：把前四问放进时间轴。一项开销不是因为“存在”就自动位于 critical path；只有当它不能被计算或其他通信隐藏、不能被充分摊销，并阻塞下一条必需依赖时，才会决定 consumer-visible time。下面分别检查启动/重启、稳态执行和故障检测恢复，并用 MRC 与 Meta 100K+ GPU 案例说明 scale 如何改变成本模型。
+
+## Slide 70｜一项开销什么时候真正进入 Critical Path？
 
 屏幕正文：
 
 ```text
-Minimize bytes on critical path,
-not merely maximize link utilization.
+exposed cost = total cost
+             - hidden overlap
+             - amortized / off-path work
+
+启动 / 重启：bootstrap · communicator · QP / resource setup
+稳态执行：HBM footprint · queue · RTT/BDP · progress · contention
+故障恢复：detection · retry / reroute · diagnosis · restart
 ```
 
-讲师说明：跨层优化的优先级通常是：先消除不必要 bytes，再改变落点和路径，然后减少同步轮次，最后才是在同一路径上追求更高利用率。prefix reuse 直接避免重新计算和搬 KV；expert placement 减少 token 跨慢域；recompute vs transfer 在 FLOPs 与 bandwidth 间选择；compression/低精度减少 payload 但增加 encode/decode；direct-to-host 消除 staging；in-network reduce 消除重复流量。
+讲师说明：critical path 是从 producer dependency 到 consumer start 的最长必要依赖链，不是所有发生过的工作之和。初始化若只发生一次且能摊销，可能不影响稳态 step；但如果大规模故障使作业频繁重启，它就会反复暴露。通信 buffer 若没有挤压模型和 batch，可能只是 footprint；当 HBM 不足导致 batch 下降、更多 checkpoint 或额外 shard，它就间接降低 goodput。高 BDP 本身也不是坏事；只有 in-flight state 不足导致链路空闲，或过量 burst 引发 queue/recovery，它才成为阻塞。
 
-每项优化都要重新计算完整代价：省了多少 bytes/round trip，增加了多少 compute、metadata、buffer、误差、failure state，是否真正从 critical path 移除。`zero-copy` 只表示少一次显式 copy，不保证没有 DMA、cache pollution、registration 或 consumer wait；`100% link utilization` 也可能只是队列很深、尾延迟更差。
+跨层优化的优先级通常是：先消除不必要 bytes，再改变落点和路径，然后减少同步轮次，最后才是在同一路径上追求更高利用率。每项优化都要重新计算完整代价：省了多少 bytes/round trip，增加了多少 compute、metadata、buffer、误差与 failure state，是否真正从关键路径移除。`zero-copy` 只表示少一次显式 copy，不保证没有 DMA、registration、burst 或 consumer wait；`100% link utilization` 也可能只是队列很深、尾延迟更差。
 
 固定使用四步账本：`baseline critical path` 写出 bytes、rounds 和 waits；`eliminated` 标真正删除的 copy/message；`moved` 标转移到 CPU/GPU/NIC/DPU/storage 的工作；`new risk` 写新增的 buffer、精度、staleness 或 recovery。只有端到端 timeline 的 consumer-visible time 和 tail 改善，才算跨层优化成功。
 
 ---
 
-## Slide 71｜硬件演化结论：可靠性、语义与 locality 必须一起设计
+## Slide 71｜Scale 不是一个更大的 N，而是成本模型发生变化
 
-1. 短距、受控拓扑可以偏向 FEC、link replay、credit 和低状态 transaction path。
-2. 更大故障域通常需要 explicit placement、multipath、selective recovery 与端点 congestion control。
-3. Memory semantic 与 message semantic 会长期并存，边界取决于 granularity 与 failure model。
-4. 可编程 NIC/DPA 的价值是承载 telemetry、policy、virtualization 与慢速异常路径，不只是“多几个核”。
-5. Buffer/reliability boundary 是系统架构决策；同步 AI 系统还必须控制 variance，因为 step time 由最慢 rank 决定。
+```text
+per-rank state × rank count       → HBM / QP / control-plane footprint
+rare failure × device count       → 日常 recovery 与 restart
+RTT / topology heterogeneity      → 不同 BDP、tail 与 path health
+local stall × synchronization     → collective-wide wait
 
-讲师说明：把 Slide 2 的 x[i] 再走一遍：producer tile ready，device/CPU 发起，endpoint 取数，fabric 排队/传输，receiver 放置，completion/fence 发布，consumer 开始；发生错误时链路、transport、runtime 分层恢复。硬件演化的共同方向是减少其中暴露的固定开销和无效 bytes，同时让更大带宽下的 outstanding、reorder、credit、completion 和 failure state 可承受。
+MRC：阻止部分 path/link failure 升级成 job failure
+Meta 100K+：同时重做 initialization、resource、transport 与 operations
+```
 
-因此最终问题不是“Ethernet 或专用互联谁赢”，也不是“memory semantic 或 message semantic 谁替代谁”。真正的设计轴是：哪一级拓扑、哪种粒度、哪个故障域、哪个处理器保存状态；它换来了多少 path utilization、tail latency、device-side initiation、locality 和可编程性。任何把一层成本隐藏起来的抽象，都必须说明成本被放到了哪里。
+讲师说明：scale 会把原本可忽略的常数项、罕见事件和局部等待变成全局成本。每 rank 几乎看不见的 metadata 乘以 communicator、channel 和 peer 数后会挤占 HBM/NIC context；单设备低概率故障乘以 100K 个 endpoint 后会反复发生；跨 rack、zone、building 的 RTT/BDP 不再能用一组 transport 参数覆盖；同步 collective 又会把一个局部 stall 扩散成所有 rank 的 barrier wait。
+
+Slide 28 的 MRC case 在这里承担一个明确角色：它说明大规模同步训练中，路径/链路故障、丢包与重传会直接威胁 job progress，而 packet-level multipath、path health 与 selective recovery 可以让论文所报告的一些故障留在 transport/path 层，不升级为 QP 或 job failure；它不能透明覆盖任意 endpoint failure。接下来的 Meta 案例承担另一角色：它说明 scale 不只考验 data-plane resilience，还把 initialization、HBM/QP resource、BDP flow control、fault diagnosis 与规模测试一起推入系统关键路径。[A10][A44]
 
 ---
 
 ---
 
-## 5. 100K+ GPU 通信栈与推理硬件
+## 5.1 Meta 100K+ GPU：从 Steady State 扩展到完整通信生命周期
 
 ## Slide 72｜100K+ GPU：问题从 steady state 扩展到整个通信栈
 
@@ -1524,7 +1612,11 @@ CPU emulation：mock CUDA + verbs + stable handles
 
 ---
 
-## Slide 79｜从 100K 训练到推理硬件：decode 把 memory、interconnect 与 packaging 绑在一起
+# 6. 如果重新划分 Compute、Memory 与 Interconnect 边界会怎样？（163–184 min）
+
+> 本章坐标：前五问默认 GPU、HBM、NIC 与 network 的边界已经给定；本章把这些边界本身变成设计变量。每个案例都用同一张责任账本检查：哪些 bytes、状态和等待被真正删除，哪些只是转移或复制到 compiler、SRAM、I/O die、memory tier 或 network appliance，哪些形成新的 thermal、capacity、protocol 与 recovery 耦合。
+
+## Slide 79｜为什么要重画边界：decode 把 memory、interconnect 与 packaging 绑在一起
 
 屏幕正文：
 
@@ -1659,40 +1751,41 @@ PNM/NetDAM         就地操作、减少 movement     状态、编程、安全�
 
 ---
 
-## Slide 87｜把 100K 训练与推理硬件放回同一张账本
+## Slide 87｜移动一个边界后，责任消失了还是被转移了？
 
 屏幕正文：
 
 ```text
-删除 bytes → 改变落点/路径 → 减少同步 → 提高利用率
-       │
-       ├─ CCLX：删除初始化与无效 resource footprint
-       ├─ DQPLB：控制 burst 与 in-flight state
-       ├─ CS-4/Groq：改变 memory/compute/package 边界
-       └─ HBF/PNM/NetDAM：改变数据所在位置与处理位置
+                 真正减少什么          新责任落在哪里
+Cerebras         部分芯片间 movement    容量、pipeline、off-wafer I/O
+Groq             动态调度与仲裁         compiler/static schedule、外部网络
+HBF              热层的容量压力         placement、页延迟、写寿命
+PNM / 3D         memory movement 距离    thermal、mapping、接口耦合
+NetDAM           部分 collective/data movement       operation identity、ordering、recovery、programmability
 ```
 
-讲师说明：这些案例的共同方法是先问“这批 bytes 是否必须在 critical path 上出现”。CCLX 把控制面和资源分配移出启动关键路径；DQPLB 把零拷贝的 burst 约束到 BDP 预算；Cerebras/Groq 改变片上 memory、调度和封装的边界；HBF、PNM、NetDAM 则改变容量、处理和通信的落点。每项优化都要重新计算 compute、metadata、buffer、staleness、failure 和 thermal cost。只有 consumer-visible time 与 tail 真正改善，才算成功。
+讲师说明：Cerebras 减少部分细粒度芯片间边界，但 SRAM capacity 与 off-wafer I/O 成为更硬的约束；Groq 把更多 ordering/progress 决策前移到 compiler/static schedule，但动态请求、容量和外部故障仍需运行时处理；HBF、PNM 与 3D stacking 改变 memory-capacity/bandwidth boundary，却引入页延迟、寿命、散热和 software mapping；NetDAM 把部分 collective/data movement 放到 network/memory 附近，却必须新增 operation identity、权限、ordering、completion 与 partial-failure recovery。
+
+因此不能只问“少走了几跳”或“带宽提高了多少”。对每个新边界都要重新画 payload、control、completion 与 recovery 四条路径，再计算 compute、metadata、buffer、staleness、failure 和 thermal cost。责任可能被真正删除，也可能只是被转移、复制或变成更紧的跨层耦合；只有 GPU B 的 consumer-visible time、tail 和系统 goodput 改善，才算解决了原问题。
 
 ---
 
-# 总结（186–188 min）
+# 总结（184–186 min）
 
-## Slide 88｜离场前，用一次 x[i] 检查自己是否真的理解
+## Slide 88｜离场前，用六个问题重新检查 x[i]
 
 ```text
-1 dependency：为什么 B 必须等 x[i]？能否改依赖或分 chunk？
-2 location：x[i] 前后在哪个 HBM/DRAM/device/object tier？
-3 roles：谁 initiate / progress / move / complete / recover？
-4 paths：payload、control、completion、recovery 是否都画出来？
-5 bottleneck：最慢 service rate、共享 queue 和最慢 rank 是谁？
-6 semantics：delivery、placement、completion、ordering 各由谁保证？
-7 evidence：哪条 timeline、counter、topology 或 P99 能证伪判断？
-8 optimization：删除了哪次 copy/wait，还是只把工作移到别处？
-9 boundary：跨 scale-up、scale-out、memory/storage 后，状态落在哪里？
+1 consumability：delivery / placement / completion / visibility / ordering 是否成立？
+2 boundaries：x[i] 穿过哪些 memory、device、protocol 与 failure domain？
+3 ownership：谁 maintain state，谁 initiate / progress / complete / recover？
+4 workload：traffic 如何经过 topology、queue 与 synchronization 变成 wait-for graph？
+5 critical path：哪些 startup、steady-state、recovery cost 没有被隐藏？scale 放大了什么？
+6 redesign：移动 compute / memory / interconnect 边界后，责任是消失、转移还是复制？
+
+Cross-cutting evidence：timeline · counter · topology · queue · P99/max-rank · failure trace
 ```
 
-讲师说明：最后重新口述 Slide 2：A 产生 x[i]，B 必须等它。若听众能回答这九问，就已经拥有可迁移的通信 sense，而不是背了一套产品表。答案可能是 NCCL ring + GPUDirect + RNIC RC，也可能是 device put + scale-up endpoint，或 KV object 从 remote tier 提升；分析方法不变。
+讲师说明：最后重新口述 Slide 2：A 产生 x[i]，B 必须等它。若听众能回答这六问，并为每个判断指出可证伪的 evidence，就已经拥有可迁移的 communication-system reasoning，而不是背了一套产品表。答案可能是 NCCL ring + GPUDirect + RNIC RC，也可能是 device put + scale-up endpoint，或 KV object 从 remote tier 提升；分析方法不变。
 
 建议现场给一个新例子作 60 秒验收：`all_reduce()` 慢且 NIC 只有 60% 利用率。先不能回答“加带宽”；必须检查 source ready、NCCL schedule、GPU–NIC affinity、progress gap、destination reduction/HBM、pause/credit、completion tail 和 slowest rank。若没有证据，判断就还停留在猜测。
 
